@@ -1,0 +1,6 @@
+node_modules/
+.research/
+*.tgz
+.agents/mcp.json.bak-*
+.agents/mcp.json.*.tmp
+.agents/mcp.json.lock

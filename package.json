@@ -5,9 +5,9 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://git.aime.pp.ua/Harness/dsh-mcp-autoload.git"
+    "url": "git+https://github.com/micln/dsh-mcp-autoload.git"
   },
-  "homepage": "https://git.aime.pp.ua/Harness/dsh-mcp-autoload",
+  "homepage": "https://github.com/micln/dsh-mcp-autoload",
   "keywords": ["deepseek-harness", "dsh", "dsh-plugin", "cordis", "mcp", "plugin"],
   "type": "module",
   "exports": {

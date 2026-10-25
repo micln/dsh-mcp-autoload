@@ -111,7 +111,13 @@ same algorithm the DSH ACP bridge uses), e.g. `我的服务器` → `server_<has
   parallel; one slow or broken server never blocks the others
   (`failOnStartupError` stays false). A server that fails to connect is
   skipped with an error log and the rest keep working.
-- **In-session management.** The popover can enable/disable project MCP servers after explicit confirmation. It backs up the original JSON and atomically replaces it; tools are unloaded/reconnected in the current session. If reconnect fails, the config remains enabled and the popover allows retry.
+- **In-session management.** The popover can enable/disable project MCP servers
+  after a browser confirmation. The manifest is locked, backed up (only the five
+  newest backups are kept) and replaced atomically; a symlinked manifest is
+  followed so the link itself survives. Disabling unloads its tools at once. If
+  re-enabling cannot mount, the manifest is rolled back to its previous state and
+  the failure is reported — the file never claims a state the session could not
+  actually mount.
 - **User-level MCPs.** Profile-configured entries are listed but cannot be toggled here; only project manifest entries are writable.
 - **No external hot reload.** The manifest is read once per session start (including resume). Manual edits require a new session to apply.
 - **Plugin config** (in the patch row):

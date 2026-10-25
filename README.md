@@ -86,7 +86,7 @@ Four entries cover every field and both toggle spellings:
 | `url` | Streamable HTTP | Absolute `http(s)://` URL. Required for HTTP |
 | `headers` | Streamable HTTP | Optional string map of extra request headers |
 | `type` | — | Optional; accepted values are `stdio` and `http`. `sse` is rejected with a log line |
-| `disabled` / `enabled` | — | Optional; `disabled: true` or `enabled: false` skips the entry silently (both Claude Code and Codex spellings) |
+| `disabled` / `enabled` | — | Optional; `disabled: true` or `enabled: false` skips the entry silently (both Claude Code and Codex spellings). The popover removes both fields to enable, or writes `disabled: true` to disable |
 
 **Transport selection:** an entry with `url` mounts over Streamable HTTP;
 otherwise `command` mounts a stdio child process whose working directory is
@@ -111,8 +111,9 @@ same algorithm the DSH ACP bridge uses), e.g. `我的服务器` → `server_<has
   parallel; one slow or broken server never blocks the others
   (`failOnStartupError` stays false). A server that fails to connect is
   skipped with an error log and the rest keep working.
-- **No hot reload.** The manifest is read once per session start (including
-  resume). Edit it and start a new session to apply changes.
+- **In-session management.** The popover can enable/disable project MCP servers after explicit confirmation. It backs up the original JSON and atomically replaces it; tools are unloaded/reconnected in the current session. If reconnect fails, the config remains enabled and the popover allows retry.
+- **User-level MCPs.** Profile-configured entries are listed but cannot be toggled here; only project manifest entries are writable.
+- **No external hot reload.** The manifest is read once per session start (including resume). Manual edits require a new session to apply.
 - **Plugin config** (in the patch row):
 
 ```yaml

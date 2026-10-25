@@ -84,7 +84,7 @@ dsh plugin --profile web add /绝对路径/dsh-mcp-autoload
 | `url` | Streamable HTTP | 绝对 `http(s)://` URL。HTTP 必填 |
 | `headers` | Streamable HTTP | 可选字符串映射，附加请求头 |
 | `type` | — | 可选；接受 `stdio` 和 `http`。`sse` 会被拒绝并记一条日志 |
-| `disabled` / `enabled` | — | 可选；`disabled: true` 或 `enabled: false` 静默跳过该条目（兼容 Claude Code 和 Codex 两种写法） |
+| `disabled` / `enabled` | — | 可选；`disabled: true` 或 `enabled: false` 静默跳过该条目（兼容 Claude Code 和 Codex 两种写法）；弹窗启用时移除这两个字段，禁用时写入 `disabled: true` |
 
 **传输判定**：有 `url` 的条目走 Streamable HTTP；否则有 `command` 的挂 stdio 子进程，其工作目录为会话 cwd。两者都没有的条目记错误日志后跳过。
 
@@ -96,7 +96,8 @@ dsh plugin --profile web add /绝对路径/dsh-mcp-autoload
 
 - **会话级作用域**。每个 server 挂载在 agent 的 Cordis scope 内：工具只对该会话生效，连接在 agent 释放时关闭。不同项目的两个会话可以独立复用同一 server 名。
 - **启动**。挂载发生在 agent 创建期间并等待初始连接完成，因此首个回合即可使用工具。各 server 并行连接；一个慢或坏的 server 不会阻塞其他 server（`failOnStartupError` 固定为 false）。连接失败的 server 记错误日志后跳过，其余照常工作。
-- **无热重载**。manifest 在每次会话启动（含 resume）时读取一次。修改后需开启新会话才能生效。
+- **会话内管理**。弹窗可启用/禁用项目级 MCP；修改前会二次确认，备份原 JSON 并原子写回。切换后当前会话立即卸载/重连工具；重连失败时配置仍保持启用，可在弹窗重试。用户级 MCP 仅展示，不提供开关。
+- **无外部热重载**。manifest 在每次会话启动（含 resume）时读取一次；手工修改配置后需开启新会话才能生效。
 - **插件配置**（patch 行内）：
 
 ```yaml

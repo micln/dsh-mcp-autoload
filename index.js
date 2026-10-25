@@ -19,6 +19,7 @@ import { createHash } from 'node:crypto'
 import { readFile, stat } from 'node:fs/promises'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 import Schema from '@deepseek-ai/schemastery'
+import { setManifestServerEnabled } from './manifest.js'
 import { TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import * as McpClient from '@deepseek-ai/dsh-mcp-client'
 
@@ -60,6 +61,9 @@ export class McpAutoloadService extends TypertRemoteService {
   /** Live agents' mount records keyed by agent object identity. */
   _agents = new Map()
 
+  /** Active toggles keyed by session and raw server name. */
+  _pendingToggles = new Set()
+
   constructor(ctx) {
     super(ctx, 'mcpAutoload')
   }
@@ -74,6 +78,61 @@ export class McpAutoloadService extends TypertRemoteService {
     this._agents.delete(agent)
   }
 
+  /** Toggle one project server after an explicit UI confirmation. */
+  async setEnabled(sessionId, rawName, enabled, confirmed) {
+    if (confirmed !== true) throw new Error('MCP changes require explicit confirmation')
+    if (typeof rawName !== 'string' || rawName.length === 0 || typeof enabled !== 'boolean') {
+      throw new Error('invalid MCP toggle request')
+    }
+    const agent = this.ctx.get('agents')?.get(sessionId)
+    if (agent === undefined) throw new Error('session is unavailable')
+    const recorded = this._agents.get(agent)
+    if (recorded?.manifestPath == null) throw new Error('project MCP manifest is unavailable for this session')
+    if (agent.ctx.fiber.uid === null) throw new Error('this session is shutting down')
+    const pendingKey = `${sessionId}\u0000${rawName}`
+    if (this._pendingToggles.has(pendingKey)) throw new Error('this MCP server is already being updated')
+    this._pendingToggles.add(pendingKey)
+    try {
+      const mount = recorded.mounts.find(item => item.rawName === rawName)
+      if (mount === undefined) throw new Error('MCP server is not part of this project manifest')
+      if (mount.mountError && mount.transport === 'unknown') throw new Error(`MCP server is invalid: ${mount.mountError}`)
+      if (mount.enabled === enabled && (enabled === false || mount.mounted)) return { changed: false }
+
+      const { backupPath, entry } = await setManifestServerEnabled(recorded.manifestPath, rawName, enabled)
+      mount.entry = entry
+      if (enabled) {
+        mount.enabled = true
+        mount.mounted = false
+        mount.mountError = ''
+        try {
+          const translation = translateEntry(entry, mount.serverName, recorded.sessionCwd)
+          if (translation === null) throw new Error('MCP server remains disabled by its manifest entry')
+          mount.transport = translation.transport
+          mount.target = translation.target
+          const fiber = agent.ctx.plugin(McpClient, translation.config)
+          await fiber
+          mount.fiber = fiber
+          mount.mounted = true
+          mount.mountError = ''
+          mount.transport = translation.transport
+          mount.target = translation.target
+        } catch (error) {
+          mount.mountError = String(error)
+          throw error
+        }
+      } else {
+        const fiber = mount.fiber
+        await fiber?.dispose()
+        mount.enabled = false
+        mount.mounted = false
+        mount.fiber = undefined
+      }
+      return { changed: true, enabled, backupPath }
+    } finally {
+      this._pendingToggles.delete(pendingKey)
+    }
+  }
+
   /**
    * The `mcpAutoload/status` Remote invocation: one session's mounted servers
    * and every registered tool with name, description, and parameter schema.
@@ -84,11 +143,11 @@ export class McpAutoloadService extends TypertRemoteService {
     const agents = this.ctx.get('agents')
     const agent = agents?.get(sessionId)
     const recorded = agent === undefined ? undefined : this._agents.get(agent)
-    const projectNames = new Set(recorded?.mounts.map(mount => mount.serverName) ?? [])
+    const projectNames = new Set(recorded?.mounts.filter(mount => mount.mounted).map(mount => mount.serverName) ?? [])
     const servers = []
     if (recorded !== undefined && agent !== undefined) {
       for (const mount of recorded.mounts) {
-        servers.push(viewOf(mount, 'project', toolsOf(this.ctx, agent, mount.serverName)))
+        servers.push(viewOf(mount, 'project', mount.mounted ? toolsOf(this.ctx, agent, mount.serverName) : []))
       }
     }
     // User-level: mcp__ tools visible to this agent whose server is not a project mount.
@@ -99,7 +158,11 @@ export class McpAutoloadService extends TypertRemoteService {
         seen.add(group.serverName)
         servers.push(viewOf({
           serverName: group.serverName,
-          origin: 'project',
+          rawName: '',
+          enabled: true,
+          mounted: true,
+          mountError: '',
+          origin: 'user',
           transport: 'unknown',
           target: '',
         }, 'user', group.tools))
@@ -158,7 +221,11 @@ function groupToolsByServer(ctx, agent) {
 function viewOf(mount, origin, tools) {
   return {
     serverName: mount.serverName,
+    rawName: mount.rawName ?? '',
     origin,
+    enabled: mount.enabled ?? true,
+    mounted: mount.mounted ?? true,
+    mountError: mount.mountError ?? '',
     transport: mount.transport,
     target: mount.target,
     toolCount: tools.length,
@@ -227,6 +294,7 @@ function parseServers(raw, path) {
 
 /** Produce a stable MCP tool namespace from a human-readable server name. */
 function normalizeServerName(name) {
+  // oxlint-disable-next-line no-control-regex -- control characters are invalid MCP identifiers.
   if (name.trim().length === 0 || /[\u0000-\u001f\u007f]/.test(name)) {
     throw new Error('invalid server name')
   }
@@ -359,25 +427,52 @@ export async function apply(ctx, config) {
 
       const settled = await Promise.allSettled(Object.entries(servers).map(async ([rawName, entry]) => {
         const serverName = normalizeServerName(rawName)
-        const translation = translateEntry(entry, serverName, sessionCwd)
-        if (translation === null) return null
-        await agent.ctx.plugin(McpClient, translation.config)
-        return {
-          serverName,
-          origin: 'project',
-          transport: translation.transport,
-          target: translation.target,
+        const validEntry = entry !== null && typeof entry === 'object' && !Array.isArray(entry)
+        const enabled = !validEntry || (entry.disabled !== true && entry.enabled !== false)
+        const mount = {
+          serverName: rawName,
+          rawName,
+          enabled,
+          mounted: false,
+          mountError: '',
+          transport: entry?.url === undefined ? 'stdio' : 'streamable-http',
+          target: entry?.url ?? [entry?.command, ...(Array.isArray(entry?.args) ? entry.args : [])].filter(Boolean).join(' '),
+          entry,
+          fiber: undefined,
         }
+        if (!enabled) return mount
+        try {
+          const translation = translateEntry(entry, serverName, sessionCwd)
+          if (translation === null) return mount
+          mount.transport = translation.transport
+          mount.target = translation.target
+          mount.fiber = agent.ctx.plugin(McpClient, translation.config)
+          await mount.fiber
+          mount.serverName = serverName
+          mount.mounted = true
+        } catch (error) {
+          mount.mountError = String(error)
+          if (mount.fiber !== undefined) await mount.fiber.dispose().catch(() => {})
+          throw Object.assign(error instanceof Error ? error : new Error(String(error)), { mount })
+        }
+        return mount
       }))
 
       const mounts = []
       for (const [index, outcome] of settled.entries()) {
         const rawName = Object.keys(servers)[index]
         if (outcome.status === 'fulfilled') {
-          if (outcome.value !== null) mounts.push(outcome.value)
-        } else ctx.logger.error(`${label}: skipping "${rawName}" from ${manifestPath}: ${String(outcome.reason)}`)
+          mounts.push(outcome.value)
+        } else {
+          const mount = outcome.reason?.mount ?? {
+            serverName: rawName, rawName, enabled: true, mounted: false,
+            mountError: String(outcome.reason), transport: 'unknown', target: '', entry: servers[rawName],
+          }
+          mounts.push(mount)
+          ctx.logger.error(`${label}: skipping "${rawName}" from ${manifestPath}: ${String(outcome.reason)}`)
+        }
       }
-      service.record(agent, { manifestPath, mounts })
+      service.record(agent, { manifestPath, mounts, sessionCwd })
       recorded = true
       if (mounts.length > 0) {
         ctx.logger.info(`${label}: mounted ${mounts.map(mount => mount.serverName).join(', ')} from ${manifestPath}`)

@@ -8,7 +8,14 @@
     "url": "git+https://github.com/micln/dsh-mcp-autoload.git"
   },
   "homepage": "https://github.com/micln/dsh-mcp-autoload",
-  "keywords": ["deepseek-harness", "dsh", "dsh-plugin", "cordis", "mcp", "plugin"],
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "cordis",
+    "mcp",
+    "plugin"
+  ],
   "type": "module",
   "exports": {
     ".": "./index.js",
@@ -18,16 +25,31 @@
     "./locale/*.json": "./locale/*.json",
     "./icon": "./icon.svg"
   },
-  "files": ["index.js", "wire.js", "typert.js", "client.js", "cordis.patch.yml", "locale/*.json", "icon.svg", "README.md", "README.zh.md"],
+  "files": [
+    "index.js",
+    "manifest.js",
+    "wire.js",
+    "typert.js",
+    "client.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "README.md",
+    "README.zh.md"
+  ],
   "engines": {
     "node": "^22.19.0 || >=24.0.0",
     "dsh": ">=0.2.1-0 <0.3.0"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.5-alpha.1",
-    "@deepseek-ai/schemastery": "^3.18.5-alpha.1",
+    "@deepseek-ai/dsh-atomic-write": ">=0.2.1-0 <0.3.0",
     "@deepseek-ai/dsh-mcp-client": ">=0.2.1-0 <0.3.0",
-    "@deepseek-ai/dsh-typert-protocol": ">=0.2.1-0 <0.3.0"
+    "@deepseek-ai/dsh-typert-protocol": ">=0.2.1-0 <0.3.0",
+    "@deepseek-ai/schemastery": "^3.18.5-alpha.1"
+  },
+  "devDependencies": {
+    "oxlint": "^1.89.0"
   },
   "dsh": {
     "bundle": {
@@ -36,7 +58,9 @@
     "client": {
       "platform": "web",
       "immediately": true,
-      "inject": ["@deepseek-ai/dsh-client-ui-conversation"]
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-conversation"
+      ]
     }
   }
 }

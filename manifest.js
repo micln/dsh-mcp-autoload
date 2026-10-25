@@ -5,9 +5,10 @@ import { setTimeout as delay } from 'node:timers/promises'
 
 const MAX_CONFIG_BYTES = 1_048_576
 const LOCK_TIMEOUT_MS = 10_000
-const STALE_LOCK_MS = 60_000
+const LOCK_GRACE_MS = 5_000
 const KEEP_BACKUPS = 5
 const BACKUP_MARKER = '.bak-'
+const BACKUP_NAME = /\.bak-\d{13}-[0-9a-f]{8}$/
 
 /** Update one project MCP entry under a lock, keeping a backup and atomic rename. */
 export async function setManifestServerEnabled(path, rawName, enabled) {
@@ -16,7 +17,8 @@ export async function setManifestServerEnabled(path, rawName, enabled) {
   }
 
   const target = await resolveManifestPath(path)
-  const lock = await acquireLock(`${target}.lock`)
+  const lockPath = `${target}.lock`
+  const lock = await acquireLock(lockPath)
   try {
     const fileInfo = await stat(target)
     if (fileInfo.size > MAX_CONFIG_BYTES) throw new Error(`manifest exceeds ${MAX_CONFIG_BYTES} bytes: ${target}`)
@@ -60,11 +62,11 @@ export async function setManifestServerEnabled(path, rawName, enabled) {
     const savedEntry = saved?.mcpServers?.[rawName]
     const savedEnabled = savedEntry?.disabled !== true && savedEntry?.enabled !== false
     if (savedEnabled !== enabled) throw new Error(`manifest write verification failed for MCP server "${rawName}"`)
-    await pruneBackups(target)
+    await pruneBackups(target, backupPath)
     return { backupPath, entry: savedEntry }
   } finally {
-    await lock.close().catch(() => {})
-    await rm(`${target}.lock`, { force: true })
+    await lock.handle.close().catch(() => {})
+    await releaseLock(lockPath, lock.token)
   }
 }
 
@@ -74,7 +76,12 @@ export async function setManifestServerEnabled(path, rawName, enabled) {
  * atomic rename all target the real file — so the user's symlink survives.
  */
 async function resolveManifestPath(path) {
-  const target = await realpath(path)
+  let target
+  try {
+    target = await realpath(path)
+  } catch (error) {
+    throw new Error(`MCP manifest is unavailable: ${path} (${error?.code ?? error})`)
+  }
   const info = await stat(target)
   if (!info.isFile()) throw new Error(`MCP manifest must be a regular file: ${path}`)
   return target
@@ -93,15 +100,22 @@ async function writeAtomically(target, content, mode) {
   }
 }
 
-/** Take the manifest lock, waiting out a live holder and reclaiming a dead one. */
+/**
+ * Take the manifest lock, reclaiming one whose owner is gone. Waiting is always
+ * bounded by LOCK_TIMEOUT_MS so a session can never hang on a stale lock forever.
+ */
 async function acquireLock(lockPath) {
   const deadline = Date.now() + LOCK_TIMEOUT_MS
   for (;;) {
+    if (Date.now() >= deadline) {
+      throw new Error(`timed out waiting for manifest lock: ${lockPath} (delete it if no other session is writing)`)
+    }
     try {
       const handle = await open(lockPath, 'wx', 0o600)
+      const token = randomUUID()
       try {
-        await handle.writeFile(`${process.pid}\n`)
-        return handle
+        await handle.writeFile(`${process.pid} ${token}\n`)
+        return { handle, token }
       } catch (error) {
         await handle.close().catch(() => {})
         await rm(lockPath, { force: true })
@@ -111,16 +125,16 @@ async function acquireLock(lockPath) {
       if (error?.code !== 'EEXIST') throw error
     }
     if (await reclaimStaleLock(lockPath)) continue
-    if (Date.now() >= deadline) throw new Error(`timed out waiting for manifest lock: ${lockPath}`)
     await delay(40)
   }
 }
 
 /**
- * Drop a lock whose owner is gone. Renaming before deleting keeps the takeover
- * race-free: among concurrent waiters exactly one rename can win. A lock older
- * than STALE_LOCK_MS is reclaimed regardless of its recorded pid, which also
- * covers pid reuse and a lock file that was never written.
+ * Drop a lock whose owner is gone. A recorded pid that is still alive is always
+ * left alone, so a slow writer is never evicted mid-write. Renaming before
+ * deleting keeps the takeover race-free: among concurrent waiters exactly one
+ * rename can win. A lock file that was created but never written (no parseable
+ * pid) only becomes reclaimable after LOCK_GRACE_MS.
  */
 async function reclaimStaleLock(lockPath) {
   let info
@@ -129,9 +143,11 @@ async function reclaimStaleLock(lockPath) {
   } catch {
     return false
   }
-  if (Date.now() - info.mtimeMs < STALE_LOCK_MS) {
-    const pid = Number.parseInt(await readFile(lockPath, 'utf8').catch(() => ''), 10)
-    if (!Number.isInteger(pid) || pid <= 0 || isProcessAlive(pid)) return false
+  const pid = Number.parseInt(await readFile(lockPath, 'utf8').catch(() => ''), 10)
+  if (Number.isInteger(pid) && pid > 0) {
+    if (isProcessAlive(pid)) return false
+  } else if (Date.now() - info.mtimeMs < LOCK_GRACE_MS) {
+    return false
   }
   const stalePath = `${lockPath}.stale-${randomUUID()}`
   try {
@@ -141,6 +157,13 @@ async function reclaimStaleLock(lockPath) {
   }
   await rm(stalePath, { force: true })
   return true
+}
+
+/** Release the lock only while it is still the one this caller created. */
+async function releaseLock(lockPath, token) {
+  const current = await readFile(lockPath, 'utf8').catch(() => '')
+  if (!current.includes(token)) return
+  await rm(lockPath, { force: true })
 }
 
 /** Signal 0 only probes for existence; EPERM still means the owner is alive. */
@@ -153,11 +176,21 @@ function isProcessAlive(pid) {
   }
 }
 
-/** Keep the newest backups and drop older ones so a busy manifest cannot grow without bound. */
-async function pruneBackups(target) {
+/**
+ * Keep the newest backups and drop older ones, counting the backup this call
+ * just reported against the budget. Only names this module produced are
+ * considered, and `keepPath` is never a candidate — never a hand-made file the
+ * user happens to have named the same way, and never the reported backup.
+ */
+async function pruneBackups(target, keepPath) {
   const directory = dirname(target)
   const prefix = `${basename(target)}${BACKUP_MARKER}`
   const names = await readdir(directory).catch(() => [])
-  const stale = names.filter(name => name.startsWith(prefix)).sort().reverse().slice(KEEP_BACKUPS)
+  const stale = names
+    .filter(name => name.startsWith(prefix) && BACKUP_NAME.test(name))
+    .filter(name => join(directory, name) !== keepPath)
+    .sort()
+    .reverse()
+    .slice(KEEP_BACKUPS - 1)
   await Promise.all(stale.map(name => rm(join(directory, name), { force: true }).catch(() => {})))
 }

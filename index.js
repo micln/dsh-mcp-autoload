@@ -97,48 +97,51 @@ export class McpAutoloadService extends TypertRemoteService {
       if (mount.mountError && mount.transport === 'unknown') throw new Error(`MCP server is invalid: ${mount.mountError}`)
       if (mount.enabled === enabled && (enabled === false || mount.mounted)) return { changed: false }
 
-      const previousEnabled = mount.enabled
-      const { backupPath, entry } = await setManifestServerEnabled(recorded.manifestPath, rawName, enabled)
-      mount.entry = entry
-      if (enabled) {
-        mount.enabled = true
-        mount.mounted = false
-        mount.mountError = ''
-        try {
-          const serverName = normalizeServerName(rawName)
-          const translation = translateEntry(entry, serverName, recorded.sessionCwd)
-          if (translation === null) throw new Error('MCP server remains disabled by its manifest entry')
-          mount.transport = translation.transport
-          mount.target = translation.target
-          const fiber = agent.ctx.plugin(McpClient, translation.config)
-          await fiber
-          mount.fiber = fiber
-          mount.serverName = serverName
-          mount.mounted = true
-          mount.mountError = ''
-          mount.transport = translation.transport
-          mount.target = translation.target
-        } catch (error) {
-          mount.mountError = String(error)
-          if (previousEnabled === false) {
-            // The manifest was already rewritten; put it back so the file never
-            // claims a state this session could not actually mount.
-            try {
-              const restored = await setManifestServerEnabled(recorded.manifestPath, rawName, false)
-              mount.entry = restored.entry
-              mount.enabled = false
-            } catch {
-              // Report the mount failure; the rollback itself is best effort.
-            }
-          }
-          throw error
-        }
-      } else {
-        const fiber = mount.fiber
-        await fiber?.dispose()
+      if (!enabled) {
+        // Unmount first: if that fails the manifest is untouched and still truthful.
+        await mount.fiber?.dispose()
+        const { backupPath, entry } = await setManifestServerEnabled(recorded.manifestPath, rawName, false)
+        mount.entry = entry
         mount.enabled = false
         mount.mounted = false
         mount.fiber = undefined
+        return { changed: true, enabled, backupPath }
+      }
+
+      const previousEnabled = mount.enabled
+      const { backupPath, entry } = await setManifestServerEnabled(recorded.manifestPath, rawName, true)
+      mount.entry = entry
+      mount.enabled = true
+      mount.mounted = false
+      mount.mountError = ''
+      try {
+        const serverName = normalizeServerName(rawName)
+        const translation = translateEntry(entry, serverName, recorded.sessionCwd)
+        if (translation === null) throw new Error('MCP server remains disabled by its manifest entry')
+        mount.transport = translation.transport
+        mount.target = translation.target
+        const fiber = agent.ctx.plugin(McpClient, translation.config)
+        await fiber
+        mount.fiber = fiber
+        mount.serverName = serverName
+        mount.mounted = true
+        mount.mountError = ''
+        mount.transport = translation.transport
+        mount.target = translation.target
+      } catch (error) {
+        mount.mountError = String(error)
+        if (previousEnabled === false) {
+          // The manifest was already rewritten; put it back so the file never
+          // claims a state this session could not actually mount.
+          try {
+            const restored = await setManifestServerEnabled(recorded.manifestPath, rawName, false)
+            mount.entry = restored.entry
+            mount.enabled = false
+          } catch (rollbackError) {
+            mount.mountError = `${mount.mountError} (manifest rollback failed: ${String(rollbackError)})`
+          }
+        }
+        throw error
       }
       return { changed: true, enabled, backupPath }
     } finally {

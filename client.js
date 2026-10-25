@@ -45,13 +45,17 @@ window.__ModuleLoader__.load({
       type: 'object',
       properties: {
         serverName: { type: 'string' },
+        rawName: { type: 'string' },
         origin: { type: 'string', enum: ['project', 'user'] },
+        enabled: { type: 'boolean' },
+        mounted: { type: 'boolean' },
+        mountError: { type: 'string' },
         transport: { type: 'string' },
         target: { type: 'string' },
         toolCount: { type: 'number' },
         tools: { type: 'array', items: MCP_TOOL_VIEW_JSON },
       },
-      required: ['serverName', 'origin', 'transport', 'target', 'toolCount', 'tools'],
+      required: ['serverName', 'rawName', 'origin', 'enabled', 'mounted', 'mountError', 'transport', 'target', 'toolCount', 'tools'],
       additionalProperties: false,
     };
 
@@ -94,6 +98,30 @@ window.__ModuleLoader__.load({
         result: Object.freeze(strictCodec('dsh-mcp-autoload/types#McpAutoloadSnapshot', MCP_AUTOLOAD_SNAPSHOT_JSON)),
         sourceLocation: Object.freeze({ file: 'client.js', line: 1, column: 1 }),
       }),
+      Object.freeze({
+        id: 'dsh-mcp-autoload#mcpAutoload/setEnabled',
+        service: 'mcpAutoload',
+        namespace: 'mcpAutoload',
+        method: 'setEnabled',
+        invocation: Object.freeze({ kind: 'direct' }),
+        parameters: Object.freeze([
+          Object.freeze({ name: 'sessionId', wire: 'sessionId', source: 'json', description: 'Session whose project MCP servers are managed.', codec: strictCodec('dsh-mcp-autoload/types#SessionId', { type: 'string' }) }),
+          Object.freeze({ name: 'rawName', wire: 'rawName', source: 'json', description: 'Original project manifest key.', codec: strictCodec('dsh-mcp-autoload/types#RawServerName', { type: 'string' }) }),
+          Object.freeze({ name: 'enabled', wire: 'enabled', source: 'json', description: 'Whether the project MCP server should be enabled.', codec: strictCodec('dsh-mcp-autoload/types#Enabled', { type: 'boolean' }) }),
+          Object.freeze({ name: 'confirmed', wire: 'confirmed', source: 'json', description: 'Explicit user confirmation for changing the project manifest.', codec: strictCodec('dsh-mcp-autoload/types#Confirmed', { type: 'boolean' }) }),
+        ]),
+        result: Object.freeze(strictCodec('dsh-mcp-autoload/types#McpAutoloadToggleResult', {
+          type: 'object',
+          properties: {
+            changed: { type: 'boolean' },
+            enabled: { type: 'boolean' },
+            backupPath: { type: 'string' },
+          },
+          required: ['changed'],
+          additionalProperties: false,
+        })),
+        sourceLocation: Object.freeze({ file: 'client.js', line: 1, column: 1 }),
+      }),
     ]);
 
     const MCP_AUTOLOAD_REMOTE = Object.freeze({
@@ -127,6 +155,18 @@ window.__ModuleLoader__.load({
         error: 'Failed to load MCP inventory',
         originProject: 'Project-level (from .agents/mcp.json)',
         originUser: 'User-level (profile configuration)',
+        enabled: 'Enabled',
+        disabled: 'Disabled',
+        retry: 'Retry',
+        enabledState: 'Enabled',
+        disabledState: 'Disabled',
+        enable: 'Enable',
+        disable: 'Disable',
+        confirmEnable: 'Enable this project MCP server? The project JSON file will be rewritten.',
+        confirmDisable: 'Disable this project MCP server? Its tools will be removed from this session and the project JSON file will be rewritten.',
+        toggleFailed: 'Failed to change MCP server',
+        toggleDone: 'MCP server updated. Backup: ',
+        mountFailed: 'Connection failed',
       },
       zh: {
         trigger: 'MCP 服务器',
@@ -149,6 +189,18 @@ window.__ModuleLoader__.load({
         error: '加载 MCP 清单失败',
         originProject: '项目级（来自 .agents/mcp.json）',
         originUser: '用户级（profile 配置）',
+        enabled: '已启用',
+        disabled: '已禁用',
+        retry: '重试连接',
+        enabledState: '已启用',
+        disabledState: '已禁用',
+        enable: '启用',
+        disable: '禁用',
+        confirmEnable: '确定启用此项目级 MCP？将同步修改项目 JSON 文件。',
+        confirmDisable: '确定禁用此项目级 MCP？它的工具会从当前会话移除，并同步修改项目 JSON 文件。',
+        toggleFailed: '修改 MCP 状态失败',
+        toggleDone: '已更新 MCP。备份：',
+        mountFailed: '连接失败',
       },
     };
 
@@ -335,6 +387,31 @@ window.__ModuleLoader__.load({
 [data-dsh-mcp-autoload] .dma-badge-project {
   border-color: var(--dsw-alias-state-success-primary);
   color: var(--dsw-alias-state-success-primary);
+}
+[data-dsh-mcp-autoload] .dma-server-toggle {
+  flex: none;
+  margin-left: auto;
+  padding: 1px 7px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  cursor: pointer;
+}
+[data-dsh-mcp-autoload] .dma-server-toggle[disabled] {
+  cursor: default;
+  opacity: 0.5;
+}
+[data-dsh-mcp-autoload] .dma-server-state {
+  flex: none;
+  color: var(--dsw-alias-label-tertiary);
+  white-space: nowrap;
+}
+[data-dsh-mcp-autoload] .dma-server-error {
+  margin-top: 2px;
+  color: var(--dsw-alias-state-error-primary);
+  overflow-wrap: anywhere;
 }
 [data-dsh-mcp-autoload] .dma-server-count {
   flex: none;
@@ -548,19 +625,36 @@ window.__ModuleLoader__.load({
           body.length > 0 ? h('div', { className: 'dma-tool-body' }, body) : null));
     }
 
-    function ServerGroup(t, server) {
+    function ServerGroup(t, server, busy, onToggle) {
       const isProject = server.origin === 'project';
-      return h('div', { key: server.serverName, className: 'dma-server' },
+      const retrying = server.enabled && !server.mounted;
+      const label = retrying ? t('retry') : server.enabled ? t('disable') : t('enable');
+      return h('div', { key: `${server.origin}:${server.rawName || server.serverName}`, className: 'dma-server' },
         h('div', { className: 'dma-server-head' },
-          h('span', { className: 'dma-server-name' }, server.serverName),
+          h('span', { className: 'dma-server-name' }, server.rawName || server.serverName),
           h('span', {
             className: `dma-badge${isProject ? ' dma-badge-project' : ''}`,
             title: isProject ? t('originProject') : t('originUser'),
           }, isProject ? t('project') : t('user')),
-          h('span', { className: 'dma-server-count' },
-            `${server.toolCount} ${server.toolCount === 1 ? t('tool') : t('tools')}`)),
+          isProject && server.rawName
+            ? h('button', {
+                type: 'button',
+                className: 'dma-server-toggle',
+                disabled: busy,
+                'aria-label': `${label} ${server.rawName || server.serverName}`,
+                'aria-pressed': server.enabled,
+                onClick: () => onToggle(server),
+              }, busy ? '…' : label)
+            : h('span', { className: 'dma-server-count' },
+                `${server.toolCount} ${server.toolCount === 1 ? t('tool') : t('tools')}`)),
+        isProject
+          ? h('div', { className: 'dma-server-state' }, server.enabled ? t('enabledState') : t('disabledState'))
+          : null,
         server.target
           ? h('div', { className: 'dma-target' }, `${t('transport')}: ${server.transport} · ${server.target}`)
+          : null,
+        server.mountError
+          ? h('div', { className: 'dma-server-error' }, `${t('mountFailed')}: ${server.mountError}`)
           : null,
         server.tools.length > 0
           ? h('ul', { className: 'dma-tools' }, server.tools.map(tool => ToolRow(t, tool)))
@@ -574,6 +668,8 @@ window.__ModuleLoader__.load({
       const [snapshot, setSnapshot] = React.useState(null);
       const [error, setError] = React.useState(null);
       const [busy, setBusy] = React.useState(false);
+      const [toggleError, setToggleError] = React.useState(null);
+      const [notice, setNotice] = React.useState(null);
       const rootRef = React.useRef(null);
       const panelRef = React.useRef(null);
       const available = sessionId !== undefined;
@@ -589,9 +685,9 @@ window.__ModuleLoader__.load({
       });
       Primitives.useDismissOnOutsidePointer(rootRef, open && available, setOpen, panelRef);
 
-      const load = React.useCallback(async () => {
+      const load = React.useCallback(async (showBusy = true) => {
         if (sessionId === undefined) return;
-        setBusy(true);
+        if (showBusy) setBusy(true);
         try {
           const result = await remoteApi.status(sessionId);
           if (!result.ok) throw new Error(`${result.error.code}: ${result.error.message}`);
@@ -600,9 +696,30 @@ window.__ModuleLoader__.load({
         } catch (cause) {
           setError(String(cause?.message ?? cause));
         } finally {
+          if (showBusy) setBusy(false);
+        }
+      }, [sessionId, remoteApi]);
+
+      const toggle = React.useCallback(async (server) => {
+        if (server.origin !== 'project' || !server.rawName || sessionId === undefined || busy) return;
+        const retrying = server.enabled && !server.mounted;
+        const message = retrying ? null : server.enabled ? t('confirmDisable') : t('confirmEnable');
+        if (message !== null && !window.confirm(`${message}\n\n${server.rawName || server.serverName}`)) return;
+        const enabled = retrying || !server.enabled;
+        setBusy(true);
+        setToggleError(null);
+        setNotice(null);
+        try {
+          const result = await remoteApi.setEnabled(sessionId, server.rawName, enabled, true);
+          if (!result.ok) throw new Error(`${result.error.code}: ${result.error.message}`);
+          setNotice(result.value.backupPath ? `${t('toggleDone')} ${result.value.backupPath}` : t(enabled ? 'enabled' : 'disabled'));
+          await load(false);
+        } catch (cause) {
+          setToggleError(`${t('toggleFailed')}: ${String(cause?.message ?? cause)}`);
+        } finally {
           setBusy(false);
         }
-      }, [sessionId]);
+      }, [sessionId, busy, remoteApi, load, t]);
 
       // Load once per session so the trigger can show the count before opening.
       React.useEffect(() => { void load(); }, [load]);
@@ -633,7 +750,7 @@ window.__ModuleLoader__.load({
       } else if (snapshot.servers.length === 0) {
         content = h('div', { className: 'dma-note' }, t('noServers'));
       } else {
-        content = snapshot.servers.map(server => ServerGroup(t, server));
+        content = snapshot.servers.map(server => ServerGroup(t, server, busy, toggle));
       }
 
       const panel = open
@@ -660,6 +777,8 @@ window.__ModuleLoader__.load({
                   onClick: () => void load(),
                 }, t('refresh'))),
               h('div', { className: 'dma-rule' }),
+              toggleError ? h('div', { className: 'dma-error' }, toggleError) : null,
+              notice ? h('div', { className: 'dma-note' }, notice) : null,
               h('div', { className: 'dma-body' }, content)),
             document.body,
           )

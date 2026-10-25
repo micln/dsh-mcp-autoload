@@ -1,0 +1,138 @@
+# dsh-mcp-autoload
+
+Auto-discover project-level MCP servers for DeepSeek Harness (DSH).
+
+Place a `.agents/mcp.json` at your project root (the nearest ancestor with a
+`.git` marker). Every DSH agent session whose working directory is inside that
+project automatically mounts the declared servers; connections close when the
+session ends. Servers from other projects never leak in.
+
+English | [中文](README.zh.md)
+
+## Minimal example
+
+```json
+{
+  "mcpServers": {
+    "playwright": {
+      "command": "npx",
+      "args": ["@playwright/mcp@latest"]
+    }
+  }
+}
+```
+
+## Full example
+
+Every supported field, including the toggles:
+
+```json
+{
+  "mcpServers": {
+    "computer-control-mcp": {
+      "command": "uvx",
+      "args": ["computer-control-mcp@latest"]
+    },
+    "playwright": {
+      "command": "npx",
+      "args": ["@playwright/mcp@latest"]
+    },
+    "selenium": {
+      "command": "npx",
+      "args": ["-y", "@angiejones/mcp-selenium"]
+    },
+    "utc_time": {
+      "url": "http://utc-time-mcp-server.company.com/mcp"
+    },
+    "adobe_firefly": {
+      "type": "stdio",
+      "env": {
+        "FIREFLY_CLIENT_ID": "xyz",
+        "FIREFLY_CLIENT_SECRET": "123"
+      },
+      "command": "uvx",
+      "args": [
+        "--from",
+        "git+https://github.com/msabramo/python-firefly[mcp-server]",
+        "mcp-server"
+      ]
+    },
+    "postgres": {
+      "type": "http",
+      "url": "http://localhost:3000/mcp",
+      "headers": {
+        "Authorization": "Bearer local-dev-token"
+      }
+    },
+    "experimental_server": {
+      "enabled": false,
+      "command": "uvx",
+      "args": ["some-experimental-mcp@latest"]
+    },
+    "legacy_server": {
+      "disabled": true,
+      "url": "http://old-mcp.internal/mcp"
+    }
+  }
+}
+```
+
+## Field reference
+
+| Field | Transport | Notes |
+|---|---|---|
+| `command` | stdio | Executable: a bare name resolved from `PATH` (`npx`, `uvx`) or an absolute path. Required for stdio |
+| `args` | stdio | Optional string array, passed through without shell interpolation |
+| `env` | stdio | Optional string map merged over the scrubbed child environment; explicit entries survive the scrub |
+| `url` | Streamable HTTP | Absolute `http(s)://` URL. Required for HTTP |
+| `headers` | Streamable HTTP | Optional string map of extra request headers |
+| `type` | — | Optional; accepted values are `stdio` and `http`. `sse` is rejected with a log line |
+| `disabled` / `enabled` | — | Optional; `disabled: true` or `enabled: false` skips the entry silently (both Claude Code and Codex spellings) |
+
+**Transport selection:** an entry with `url` mounts over Streamable HTTP;
+otherwise `command` mounts a stdio child process whose working directory is
+the session's cwd. An entry with neither is skipped with an error log.
+
+**Server names.** A name matching `[A-Za-z0-9_-]{1,32}` passes through
+unchanged (`adobe_firefly`, `utc_time` stay as-is). Any other name — Chinese
+characters, spaces, over-long — is normalized to a deterministic slug (the
+same algorithm the DSH ACP bridge uses), e.g. `我的服务器` → `server_<hash>`.
+
+**Tool names.** Each server's tools register for that session as
+`mcp__<serverName>__<rawToolName>`, e.g. `mcp__playwright__browser_navigate`.
+
+## Behavior
+
+- **Per-session scope.** Each server mounts inside the agent's Cordis scope:
+  tools apply to that session only, and connections close when the agent is
+  disposed. Two sessions in different projects can use the same server name
+  independently.
+- **Startup.** Mounting happens during agent creation and awaits the initial
+  connection, so tools are available in the first turn. Servers connect in
+  parallel; one slow or broken server never blocks the others
+  (`failOnStartupError` stays false). A server that fails to connect is
+  skipped with an error log and the rest keep working.
+- **No hot reload.** The manifest is read once per session start (including
+  resume). Edit it and start a new session to apply changes.
+- **Plugin config** (in the patch row):
+
+```yaml
+- id: mcp-autoload
+  name: dsh-mcp-autoload
+  config:
+    configPath: .agents/mcp.json   # absolute, or relative to the project root
+    projectRootMarkers: ['.git']   # directory entries that mark the root
+```
+
+## Security
+
+`.agents/mcp.json` entries are **executed** on session start. A cloned
+repository containing this file gets to run arbitrary `command` lines on your
+machine — the same trust level as an npm postinstall script. Only add this
+file to projects you trust, and review it when cloning others'.
+
+## Compatibility
+
+Peer packages (`@deepseek-ai/cordis`, `@deepseek-ai/schemastery`,
+`@deepseek-ai/dsh-mcp-client`) are provided by the DSH installation; the
+bundle declares them only for version checks. Requires DSH >= 0.2.1-0 < 0.3.0.

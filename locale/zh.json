@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "项目 MCP 自动加载",
+    "description": "自动发现项目根目录 .agents/mcp.json 中声明的 MCP 服务器，并为该项目下的每个会话挂载。"
+  }
+}

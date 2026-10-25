@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Project MCP autoload",
+    "description": "Auto-discovers MCP servers declared in the project's .agents/mcp.json and mounts them for each session in that project."
+  }
+}

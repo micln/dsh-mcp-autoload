@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "time": {
+      "command": "uvx",
+      "args": ["mcp-server-time"],
+      "env": {
+        "LOCALTIME": "Asia/Shanghai"
+      }
+    }
+  }
+}

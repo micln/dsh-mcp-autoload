@@ -1,0 +1,36 @@
+{
+  "name": "dsh-mcp-autoload",
+  "version": "0.2.0",
+  "description": "Auto-discovers project-level MCP servers declared in .agents/mcp.json, mounts them per agent session, and shows a session MCP inventory panel in the Web UI.",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.js",
+    "./typert": "./typert.js",
+    "./wire": "./wire.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": ["index.js", "wire.js", "typert.js", "client.js", "cordis.patch.yml", "locale/*.json", "icon.svg", "README.md", "README.zh.md"],
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0",
+    "dsh": ">=0.2.1-0 <0.3.0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.5-alpha.1",
+    "@deepseek-ai/schemastery": "^3.18.5-alpha.1",
+    "@deepseek-ai/dsh-mcp-client": ">=0.2.1-0 <0.3.0",
+    "@deepseek-ai/dsh-typert-protocol": ">=0.2.1-0 <0.3.0"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": ["@deepseek-ai/dsh-client-ui-conversation"]
+    }
+  }
+}

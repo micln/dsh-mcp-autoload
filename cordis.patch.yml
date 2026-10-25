@@ -1,0 +1,4 @@
+- insert:
+    - id: mcp-autoload
+      name: dsh-mcp-autoload
+      config: {}

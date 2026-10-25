@@ -105,13 +105,15 @@ export class McpAutoloadService extends TypertRemoteService {
         mount.mounted = false
         mount.mountError = ''
         try {
-          const translation = translateEntry(entry, mount.serverName, recorded.sessionCwd)
+          const serverName = normalizeServerName(rawName)
+          const translation = translateEntry(entry, serverName, recorded.sessionCwd)
           if (translation === null) throw new Error('MCP server remains disabled by its manifest entry')
           mount.transport = translation.transport
           mount.target = translation.target
           const fiber = agent.ctx.plugin(McpClient, translation.config)
           await fiber
           mount.fiber = fiber
+          mount.serverName = serverName
           mount.mounted = true
           mount.mountError = ''
           mount.transport = translation.transport

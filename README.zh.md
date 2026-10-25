@@ -23,45 +23,21 @@
 
 ## 完整示例
 
-包含全部支持的字段和各种开关参数：
+四个条目覆盖全部字段和两种开关写法：
 
 ```json
 {
   "mcpServers": {
-    "computer-control-mcp": {
-      "command": "uvx",
-      "args": ["computer-control-mcp@latest"]
-    },
     "playwright": {
-      "command": "npx",
-      "args": ["@playwright/mcp@latest"]
-    },
-    "selenium": {
-      "command": "npx",
-      "args": ["-y", "@angiejones/mcp-selenium"]
-    },
-    "utc_time": {
-      "url": "http://utc-time-mcp-server.company.com/mcp"
-    },
-    "adobe_firefly": {
       "type": "stdio",
-      "env": {
-        "FIREFLY_CLIENT_ID": "xyz",
-        "FIREFLY_CLIENT_SECRET": "123"
-      },
-      "command": "uvx",
-      "args": [
-        "--from",
-        "git+https://github.com/msabramo/python-firefly[mcp-server]",
-        "mcp-server"
-      ]
+      "command": "npx",
+      "args": ["@playwright/mcp@latest"],
+      "env": { "PLAYWRIGHT_BROWSERS_PATH": "~/.cache/ms-playwright" }
     },
-    "postgres": {
+    "postgres_local": {
       "type": "http",
       "url": "http://localhost:3000/mcp",
-      "headers": {
-        "Authorization": "Bearer local-dev-token"
-      }
+      "headers": { "Authorization": "Bearer local-dev-token" }
     },
     "experimental_server": {
       "enabled": false,
@@ -90,7 +66,7 @@
 
 **传输判定**：有 `url` 的条目走 Streamable HTTP；否则有 `command` 的挂 stdio 子进程，其工作目录为会话 cwd。两者都没有的条目记错误日志后跳过。
 
-**服务器名**。匹配 `[A-Za-z0-9_-]{1,32}` 的名字原样直通（`adobe_firefly`、`utc_time` 保持不变）。其他名字——中文、空格、超长——规范化为确定性 slug（与 DSH ACP 桥同款算法），例如 `我的服务器` → `server_<hash>`。
+**服务器名**。匹配 `[A-Za-z0-9_-]{1,32}` 的名字原样直通（`postgres_local`、`experimental_server` 保持不变）。其他名字——中文、空格、超长——规范化为确定性 slug（与 DSH ACP 桥同款算法），例如 `我的服务器` → `server_<hash>`。
 
 **工具名**。每个 server 的工具按 `mcp__<serverName>__<rawToolName>` 注册到该会话，例如 `mcp__playwright__browser_navigate`。
 

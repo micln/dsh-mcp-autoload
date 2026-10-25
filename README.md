@@ -24,45 +24,21 @@ English | [中文](README.zh.md)
 
 ## Full example
 
-Every supported field, including the toggles:
+Four entries cover every field and both toggle spellings:
 
 ```json
 {
   "mcpServers": {
-    "computer-control-mcp": {
-      "command": "uvx",
-      "args": ["computer-control-mcp@latest"]
-    },
     "playwright": {
-      "command": "npx",
-      "args": ["@playwright/mcp@latest"]
-    },
-    "selenium": {
-      "command": "npx",
-      "args": ["-y", "@angiejones/mcp-selenium"]
-    },
-    "utc_time": {
-      "url": "http://utc-time-mcp-server.company.com/mcp"
-    },
-    "adobe_firefly": {
       "type": "stdio",
-      "env": {
-        "FIREFLY_CLIENT_ID": "xyz",
-        "FIREFLY_CLIENT_SECRET": "123"
-      },
-      "command": "uvx",
-      "args": [
-        "--from",
-        "git+https://github.com/msabramo/python-firefly[mcp-server]",
-        "mcp-server"
-      ]
+      "command": "npx",
+      "args": ["@playwright/mcp@latest"],
+      "env": { "PLAYWRIGHT_BROWSERS_PATH": "~/.cache/ms-playwright" }
     },
-    "postgres": {
+    "postgres_local": {
       "type": "http",
       "url": "http://localhost:3000/mcp",
-      "headers": {
-        "Authorization": "Bearer local-dev-token"
-      }
+      "headers": { "Authorization": "Bearer local-dev-token" }
     },
     "experimental_server": {
       "enabled": false,
@@ -94,7 +70,7 @@ otherwise `command` mounts a stdio child process whose working directory is
 the session's cwd. An entry with neither is skipped with an error log.
 
 **Server names.** A name matching `[A-Za-z0-9_-]{1,32}` passes through
-unchanged (`adobe_firefly`, `utc_time` stay as-is). Any other name — Chinese
+unchanged (`postgres_local`, `experimental_server` stay as-is). Any other name — Chinese
 characters, spaces, over-long — is normalized to a deterministic slug (the
 same algorithm the DSH ACP bridge uses), e.g. `我的服务器` → `server_<hash>`.
 

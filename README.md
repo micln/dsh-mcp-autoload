@@ -15,20 +15,21 @@ Requires DSH `>=0.2.1-0 <0.3.0` and Node.js `^22.19.0 || >=24.0.0`. `dsh plugin`
 forwards its arguments to pnpm inside the profile directory.
 
 ```sh
-dsh plugin --profile web add git+ssh://git@git.aime.pp.ua/Harness/dsh-mcp-autoload.git
+dsh plugin --profile web add dsh-mcp-autoload
 ```
 
 The package declares `dsh.bundle.patch`, so the CLI registers it under the
 profile's `dsh.profile.bundles` for you. Restart `dsh web` afterwards — the host
 half loads at startup — then hard-refresh the browser (Cmd/Ctrl+Shift+R).
 
-Installing from a local clone instead (the dependency is recorded as a `link:`):
+Working on the plugin from a local clone instead (the dependency is recorded as
+a `link:`):
 
 ```sh
 dsh plugin --profile web add /absolute/path/to/dsh-mcp-autoload
 ```
 
-Re-run either command to update; uninstall with
+Update with `dsh plugin --profile web add dsh-mcp-autoload@latest`; uninstall with
 `dsh plugin --profile web remove dsh-mcp-autoload`.
 
 ## Minimal example

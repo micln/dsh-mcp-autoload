@@ -2,7 +2,13 @@
   "name": "dsh-mcp-autoload",
   "version": "0.2.0",
   "description": "Auto-discovers project-level MCP servers declared in .agents/mcp.json, mounts them per agent session, and shows a session MCP inventory panel in the Web UI.",
-  "private": true,
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://git.aime.pp.ua/Harness/dsh-mcp-autoload.git"
+  },
+  "homepage": "https://git.aime.pp.ua/Harness/dsh-mcp-autoload",
+  "keywords": ["deepseek-harness", "dsh", "dsh-plugin", "cordis", "mcp", "plugin"],
   "type": "module",
   "exports": {
     ".": "./index.js",

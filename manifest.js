@@ -1,9 +1,13 @@
 import { randomUUID } from 'node:crypto'
-import { chmod, copyFile, lstat, open, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { chmod, copyFile, open, readdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { basename, dirname, join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 
 const MAX_CONFIG_BYTES = 1_048_576
 const LOCK_TIMEOUT_MS = 10_000
+const STALE_LOCK_MS = 60_000
+const KEEP_BACKUPS = 5
+const BACKUP_MARKER = '.bak-'
 
 /** Update one project MCP entry under a lock, keeping a backup and atomic rename. */
 export async function setManifestServerEnabled(path, rawName, enabled) {
@@ -11,32 +15,14 @@ export async function setManifestServerEnabled(path, rawName, enabled) {
     throw new Error('invalid MCP toggle request')
   }
 
-  const lockPath = `${path}.lock`
-  const deadline = Date.now() + LOCK_TIMEOUT_MS
-  let lock
-  while (lock === undefined) {
-    try {
-      lock = await open(lockPath, 'wx', 0o600)
-      await lock.writeFile(`${process.pid}\n`)
-    } catch (error) {
-      if (lock !== undefined) {
-        await lock.close().catch(() => {})
-        await rm(lockPath, { force: true })
-        throw error
-      }
-      if (error?.code !== 'EEXIST') throw error
-      if (Date.now() >= deadline) throw new Error(`timed out waiting for manifest lock: ${lockPath}`)
-      await delay(40)
-    }
-  }
-
+  const target = await resolveManifestPath(path)
+  const lock = await acquireLock(`${target}.lock`)
   try {
-    const fileInfo = await lstat(path)
-    if (!fileInfo.isFile()) throw new Error('MCP manifest must be a regular file, not a symlink')
-    if (fileInfo.size > MAX_CONFIG_BYTES) throw new Error(`manifest exceeds ${MAX_CONFIG_BYTES} bytes: ${path}`)
+    const fileInfo = await stat(target)
+    if (fileInfo.size > MAX_CONFIG_BYTES) throw new Error(`manifest exceeds ${MAX_CONFIG_BYTES} bytes: ${target}`)
 
-    const original = await readFile(path, 'utf8')
-    if (Buffer.byteLength(original, 'utf8') > MAX_CONFIG_BYTES) throw new Error(`manifest exceeds ${MAX_CONFIG_BYTES} bytes: ${path}`)
+    const original = await readFile(target, 'utf8')
+    if (Buffer.byteLength(original, 'utf8') > MAX_CONFIG_BYTES) throw new Error(`manifest exceeds ${MAX_CONFIG_BYTES} bytes: ${target}`)
     const manifest = JSON.parse(original)
     if (manifest === null || typeof manifest !== 'object' || Array.isArray(manifest)
       || manifest.mcpServers === null || typeof manifest.mcpServers !== 'object' || Array.isArray(manifest.mcpServers)) {
@@ -59,34 +45,119 @@ export async function setManifestServerEnabled(path, rawName, enabled) {
     }
 
     const content = `${JSON.stringify(manifest, null, 2)}\n`
-    if (Buffer.byteLength(content, 'utf8') > MAX_CONFIG_BYTES) throw new Error(`updated manifest exceeds ${MAX_CONFIG_BYTES} bytes: ${path}`)
-    const backupPath = `${path}.bak-${Date.now()}-${randomUUID().slice(0, 8)}`
-    await copyFile(path, backupPath)
-    await chmod(backupPath, fileInfo.mode & 0o777)
+    if (Buffer.byteLength(content, 'utf8') > MAX_CONFIG_BYTES) throw new Error(`updated manifest exceeds ${MAX_CONFIG_BYTES} bytes: ${target}`)
+    const mode = fileInfo.mode & 0o777
+    const backupPath = `${target}${BACKUP_MARKER}${Date.now()}-${randomUUID().slice(0, 8)}`
+    await copyFile(target, backupPath)
+    await chmod(backupPath, mode)
     const backup = await readFile(backupPath, 'utf8')
     if (backup !== original) throw new Error(`manifest backup verification failed: ${backupPath}`)
-    const tempPath = `${path}.${randomUUID()}.tmp`
-    try {
-      await writeFile(tempPath, content, {
-        flag: 'wx',
-        mode: fileInfo.mode & 0o777,
-      })
-      await chmod(tempPath, fileInfo.mode & 0o777)
-      await rename(tempPath, path)
-    } catch (error) {
-      await rm(tempPath, { force: true })
-      throw error
-    }
+    await writeAtomically(target, content, mode)
 
-    const written = await readFile(path, 'utf8')
+    const written = await readFile(target, 'utf8')
     if (written !== content) throw new Error(`manifest write verification failed for MCP server "${rawName}"`)
     const saved = JSON.parse(written)
     const savedEntry = saved?.mcpServers?.[rawName]
     const savedEnabled = savedEntry?.disabled !== true && savedEntry?.enabled !== false
     if (savedEnabled !== enabled) throw new Error(`manifest write verification failed for MCP server "${rawName}"`)
+    await pruneBackups(target)
     return { backupPath, entry: savedEntry }
   } finally {
-    await lock.close()
-    await rm(lockPath, { force: true })
+    await lock.close().catch(() => {})
+    await rm(`${target}.lock`, { force: true })
   }
+}
+
+/**
+ * Resolve the manifest to the regular file it ultimately names. A symlinked
+ * manifest is followed rather than rejected, and every read, the lock and the
+ * atomic rename all target the real file — so the user's symlink survives.
+ */
+async function resolveManifestPath(path) {
+  const target = await realpath(path)
+  const info = await stat(target)
+  if (!info.isFile()) throw new Error(`MCP manifest must be a regular file: ${path}`)
+  return target
+}
+
+/** Write through a sibling temp file so a reader never sees a half-written manifest. */
+async function writeAtomically(target, content, mode) {
+  const tempPath = `${target}.${randomUUID()}.tmp`
+  try {
+    await writeFile(tempPath, content, { flag: 'wx', mode })
+    await chmod(tempPath, mode)
+    await rename(tempPath, target)
+  } catch (error) {
+    await rm(tempPath, { force: true })
+    throw error
+  }
+}
+
+/** Take the manifest lock, waiting out a live holder and reclaiming a dead one. */
+async function acquireLock(lockPath) {
+  const deadline = Date.now() + LOCK_TIMEOUT_MS
+  for (;;) {
+    try {
+      const handle = await open(lockPath, 'wx', 0o600)
+      try {
+        await handle.writeFile(`${process.pid}\n`)
+        return handle
+      } catch (error) {
+        await handle.close().catch(() => {})
+        await rm(lockPath, { force: true })
+        throw error
+      }
+    } catch (error) {
+      if (error?.code !== 'EEXIST') throw error
+    }
+    if (await reclaimStaleLock(lockPath)) continue
+    if (Date.now() >= deadline) throw new Error(`timed out waiting for manifest lock: ${lockPath}`)
+    await delay(40)
+  }
+}
+
+/**
+ * Drop a lock whose owner is gone. Renaming before deleting keeps the takeover
+ * race-free: among concurrent waiters exactly one rename can win. A lock older
+ * than STALE_LOCK_MS is reclaimed regardless of its recorded pid, which also
+ * covers pid reuse and a lock file that was never written.
+ */
+async function reclaimStaleLock(lockPath) {
+  let info
+  try {
+    info = await stat(lockPath)
+  } catch {
+    return false
+  }
+  if (Date.now() - info.mtimeMs < STALE_LOCK_MS) {
+    const pid = Number.parseInt(await readFile(lockPath, 'utf8').catch(() => ''), 10)
+    if (!Number.isInteger(pid) || pid <= 0 || isProcessAlive(pid)) return false
+  }
+  const stalePath = `${lockPath}.stale-${randomUUID()}`
+  try {
+    await rename(lockPath, stalePath)
+  } catch {
+    return false
+  }
+  await rm(stalePath, { force: true })
+  return true
+}
+
+/** Signal 0 only probes for existence; EPERM still means the owner is alive. */
+function isProcessAlive(pid) {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    return error?.code === 'EPERM'
+  }
+}
+
+/** Keep the newest backups and drop older ones so a busy manifest cannot grow without bound. */
+async function pruneBackups(target) {
+  const directory = dirname(target)
+  const prefix = `${basename(target)}${BACKUP_MARKER}`
+  const names = await readdir(directory).catch(() => [])
+  const stale = names.filter(name => name.startsWith(prefix)).sort().reverse().slice(KEEP_BACKUPS)
+  await Promise.all(stale.map(name => rm(join(directory, name), { force: true }).catch(() => {})))
 }

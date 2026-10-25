@@ -97,7 +97,6 @@ export const MCP_AUTOLOAD_INVOCATIONS = Object.freeze([
       sessionParameter,
       Object.freeze({ name: 'rawName', wire: 'rawName', source: 'json', description: 'Original project manifest key.', codec: strictCodec('dsh-mcp-autoload/types#RawServerName', { type: 'string' }) }),
       Object.freeze({ name: 'enabled', wire: 'enabled', source: 'json', description: 'Whether the project MCP server should be enabled.', codec: strictCodec('dsh-mcp-autoload/types#Enabled', { type: 'boolean' }) }),
-      Object.freeze({ name: 'confirmed', wire: 'confirmed', source: 'json', description: 'Explicit user confirmation for changing the project manifest.', codec: strictCodec('dsh-mcp-autoload/types#Confirmed', { type: 'boolean' }) }),
     ]),
     result: Object.freeze(strictCodec('dsh-mcp-autoload/types#McpAutoloadToggleResult', MCP_AUTOLOAD_TOGGLE_RESULT_JSON)),
     sourceLocation: Object.freeze({ file: 'wire.js', line: 1, column: 1 }),

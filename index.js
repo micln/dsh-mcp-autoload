@@ -78,9 +78,8 @@ export class McpAutoloadService extends TypertRemoteService {
     this._agents.delete(agent)
   }
 
-  /** Toggle one project server after an explicit UI confirmation. */
-  async setEnabled(sessionId, rawName, enabled, confirmed) {
-    if (confirmed !== true) throw new Error('MCP changes require explicit confirmation')
+  /** Toggle one project server. The Web UI asks the user to confirm before calling. */
+  async setEnabled(sessionId, rawName, enabled) {
     if (typeof rawName !== 'string' || rawName.length === 0 || typeof enabled !== 'boolean') {
       throw new Error('invalid MCP toggle request')
     }
@@ -98,6 +97,7 @@ export class McpAutoloadService extends TypertRemoteService {
       if (mount.mountError && mount.transport === 'unknown') throw new Error(`MCP server is invalid: ${mount.mountError}`)
       if (mount.enabled === enabled && (enabled === false || mount.mounted)) return { changed: false }
 
+      const previousEnabled = mount.enabled
       const { backupPath, entry } = await setManifestServerEnabled(recorded.manifestPath, rawName, enabled)
       mount.entry = entry
       if (enabled) {
@@ -120,6 +120,17 @@ export class McpAutoloadService extends TypertRemoteService {
           mount.target = translation.target
         } catch (error) {
           mount.mountError = String(error)
+          if (previousEnabled === false) {
+            // The manifest was already rewritten; put it back so the file never
+            // claims a state this session could not actually mount.
+            try {
+              const restored = await setManifestServerEnabled(recorded.manifestPath, rawName, false)
+              mount.entry = restored.entry
+              mount.enabled = false
+            } catch {
+              // Report the mount failure; the rollback itself is best effort.
+            }
+          }
           throw error
         }
       } else {

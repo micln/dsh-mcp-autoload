@@ -26,5 +26,5 @@ test('browser and host Remote descriptors stay in sync', async () => {
   const hostDescriptors = withoutSourceLocation(toPlainJson(MCP_AUTOLOAD_INVOCATIONS))
   assert.deepEqual(browserDescriptors, hostDescriptors)
   assert.deepEqual(toPlainJson(remote.descriptors[0].result.jsonSchema.properties.servers.items), toPlainJson(MCP_SERVER_VIEW_JSON))
-  assert.deepEqual(JSON.parse(JSON.stringify(remote.descriptors[1].parameters.map(({ name }) => name))), ['sessionId', 'rawName', 'enabled', 'confirmed'])
+  assert.deepEqual(JSON.parse(JSON.stringify(remote.descriptors[1].parameters.map(({ name }) => name))), ['sessionId', 'rawName', 'enabled'])
 })

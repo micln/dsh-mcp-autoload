@@ -108,7 +108,6 @@ window.__ModuleLoader__.load({
           Object.freeze({ name: 'sessionId', wire: 'sessionId', source: 'json', description: 'Session whose project MCP servers are managed.', codec: strictCodec('dsh-mcp-autoload/types#SessionId', { type: 'string' }) }),
           Object.freeze({ name: 'rawName', wire: 'rawName', source: 'json', description: 'Original project manifest key.', codec: strictCodec('dsh-mcp-autoload/types#RawServerName', { type: 'string' }) }),
           Object.freeze({ name: 'enabled', wire: 'enabled', source: 'json', description: 'Whether the project MCP server should be enabled.', codec: strictCodec('dsh-mcp-autoload/types#Enabled', { type: 'boolean' }) }),
-          Object.freeze({ name: 'confirmed', wire: 'confirmed', source: 'json', description: 'Explicit user confirmation for changing the project manifest.', codec: strictCodec('dsh-mcp-autoload/types#Confirmed', { type: 'boolean' }) }),
         ]),
         result: Object.freeze(strictCodec('dsh-mcp-autoload/types#McpAutoloadToggleResult', {
           type: 'object',
@@ -704,18 +703,19 @@ window.__ModuleLoader__.load({
         if (server.origin !== 'project' || !server.rawName || sessionId === undefined || busy) return;
         const retrying = server.enabled && !server.mounted;
         const message = retrying ? null : server.enabled ? t('confirmDisable') : t('confirmEnable');
-        if (message !== null && !window.confirm(`${message}\n\n${server.rawName || server.serverName}`)) return;
+        if (message !== null && typeof window.confirm === 'function' && !window.confirm(`${message}\n\n${server.rawName || server.serverName}`)) return;
         const enabled = retrying || !server.enabled;
         setBusy(true);
         setToggleError(null);
         setNotice(null);
         try {
-          const result = await remoteApi.setEnabled(sessionId, server.rawName, enabled, true);
+          const result = await remoteApi.setEnabled(sessionId, server.rawName, enabled);
           if (!result.ok) throw new Error(`${result.error.code}: ${result.error.message}`);
           setNotice(result.value.backupPath ? `${t('toggleDone')} ${result.value.backupPath}` : t(enabled ? 'enabled' : 'disabled'));
           await load(false);
         } catch (cause) {
           setToggleError(`${t('toggleFailed')}: ${String(cause?.message ?? cause)}`);
+          await load(false);
         } finally {
           setBusy(false);
         }

@@ -155,7 +155,7 @@ async function reclaimStaleLock(lockPath) {
   } catch {
     return false
   }
-  await rm(stalePath, { force: true })
+  await rm(stalePath, { force: true }).catch(() => {})
   return true
 }
 

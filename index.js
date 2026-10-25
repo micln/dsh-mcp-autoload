@@ -100,11 +100,11 @@ export class McpAutoloadService extends TypertRemoteService {
       if (!enabled) {
         // Unmount first: if that fails the manifest is untouched and still truthful.
         await mount.fiber?.dispose()
+        mount.mounted = false
+        mount.fiber = undefined
         const { backupPath, entry } = await setManifestServerEnabled(recorded.manifestPath, rawName, false)
         mount.entry = entry
         mount.enabled = false
-        mount.mounted = false
-        mount.fiber = undefined
         return { changed: true, enabled, backupPath }
       }
 

@@ -8,6 +8,27 @@
 
 [English](README.md) | 中文
 
+## 安装
+
+需要 DSH `>=0.2.1-0 <0.3.0` 与 Node.js `^22.19.0 || >=24.0.0`。`dsh plugin` 会把参数转发给
+profile 目录里的 pnpm。
+
+```sh
+dsh plugin --profile web add git+ssh://git@git.aime.pp.ua/Harness/dsh-mcp-autoload.git
+```
+
+包内声明了 `dsh.bundle.patch`，CLI 的 bundle 协调会自动把它登记进 profile 的
+`dsh.profile.bundles`。装完重启 `dsh web`（host 半在启动时加载），再硬刷新浏览器
+（Cmd/Ctrl+Shift+R）。
+
+从本地克隆安装（依赖记为 `link:`）：
+
+```sh
+dsh plugin --profile web add /绝对路径/dsh-mcp-autoload
+```
+
+重跑上述任一命令即可更新；卸载：`dsh plugin --profile web remove dsh-mcp-autoload`。
+
 ## 最精简示例
 
 ```json

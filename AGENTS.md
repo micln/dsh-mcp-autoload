@@ -12,6 +12,7 @@ DSH 插件：自动发现项目级 `.agents/mcp.json`，按会话挂载其中的
 | `manifest.js` | `.agents/mcp.json` 的读改写：加锁、备份、原子替换、写后校验 |
 | `cordis.patch.yml` | bundle patch，由 `package.json` 的 `dsh.bundle.patch` 声明 |
 | `manifest.test.js`、`wire.test.js` | `node --test` 用例 |
+| `PUBLISHING.md` | 发版与 awesome-dsh-plugin 收录流程：npm 绑定、收录前置条件、条目格式、合并后站点生效时序 |
 
 两条硬约束：
 
@@ -27,7 +28,7 @@ npm pack --dry-run  # 核对发布清单：必须包含全部运行时文件，�
 
 ## 发版
 
-版本由 tag 触发 CI 发布。**不要本地 `npm publish`**——账号的 token 已被 2FA 策略禁用，只有 CI 的 OIDC 能发。
+版本由 tag 触发 CI 发布。**不要本地 `npm publish`**——账号的 token 已被 2FA 策略禁用，只有 CI 的 OIDC 能发。完整流程（收录 PR、两项 CI 检查、合并后 npm 安装命令与 README 的站点生效时序）见 [PUBLISHING.md](PUBLISHING.md)。
 
 ```sh
 git checkout master && git pull origin master

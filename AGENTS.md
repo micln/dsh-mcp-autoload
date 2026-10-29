@@ -34,15 +34,15 @@ npm pack --dry-run  # 核对发布清单：必须包含全部运行时文件，�
 git checkout master && git pull origin master
 # 编辑 package.json 的 version，必须等于 tag 去掉 v 前缀
 git commit -am "chore: release X.Y.Z"
-git push github master && git push origin master
-git tag vX.Y.Z && git push github vX.Y.Z && git push origin vX.Y.Z
+git push origin master
+git tag vX.Y.Z && git push origin vX.Y.Z
 ```
 
 `.github/workflows/publish.yml` 在 `v*` tag 推送时执行：校验 tag 与 `package.json` version 一致 → `npm test` → `npm publish`（Trusted Publishing / OIDC，自动带 provenance）→ 创建 GitHub Release。版本已存在时自动跳过发布。
 
 其他约定：
 
-- 两个 remote 都要推：`github`（GitHub，npm 主页与 `repository` 指向它）和 `origin`（Gitea）。
+- 只用 GitHub（remote `origin`，`git@github.com:micln/dsh-mcp-autoload.git`）；Gitea 仓库已不再维护。
 - tag 必须打在包含该 workflow 的提交上，不要往更早的提交打 tag。
 - 发布后核对 `npm view dsh-mcp-autoload dist-tags`（`latest` 应指向新版本）。registry 有几十秒传播延迟，别把延迟误判成失败。
 - `npm deprecate` / `npm unpublish` 不支持 OIDC，需要人工 OTP。

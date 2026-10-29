@@ -147,6 +147,6 @@ gh pr view 10153 --repo awesome-dsh-plugin/awesome-dsh-plugin
 | CI | `PR check` ✅ 14m21s；`Submission gate` ✅；无 `held: author` |
 | 合并 | 2026-10-28T17:12:58Z，commit `c33dbd0` |
 | npm | `dsh-mcp-autoload@0.4.0`，`repository` 指回本仓库 |
-| 待生效 | npm 安装命令与 README 正文，等 2026-10-29 的 nightly 探测（约北京时间 11:00–11:30） |
+| 站点生效 | 2026-10-29 nightly（构建 `40806730253`，02:30Z 起跑，2h0m）完成后，中英文页均出现 npm 安装命令与 README 正文 |
 
 已确认探测条件满足：`HEAD/package.json` 的 `name` 为 `dsh-mcp-autoload`、`dsh.bundle` 存在；registry 最新版 `repository.url = git+https://github.com/micln/dsh-mcp-autoload.git`；`README.md`（5.7 KB）与 `README.zh.md`（5.3 KB）均可访问且远低于 48 KB 上限。

@@ -142,3 +142,11 @@ file to projects you trust, and review it when cloning others'.
 Peer packages (`@deepseek-ai/cordis`, `@deepseek-ai/schemastery`,
 `@deepseek-ai/dsh-mcp-client`) are provided by the DSH installation; the
 bundle declares them only for version checks. Requires DSH >= 0.2.1-0 < 0.3.0.
+
+## Development
+
+All ESM, no build step: the source is the published artifact. `npm test` runs
+`node --test`; `npm pack --dry-run` must list every runtime file. Conventions
+live in [AGENTS.md](https://github.com/micln/dsh-mcp-autoload/blob/master/AGENTS.md);
+release and awesome-list submission are documented in
+[PUBLISHING.md](https://github.com/micln/dsh-mcp-autoload/blob/master/PUBLISHING.md).

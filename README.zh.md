@@ -115,3 +115,7 @@ dsh plugin --profile web add /绝对路径/dsh-mcp-autoload
 ## 兼容性
 
 Peer 包（`@deepseek-ai/cordis`、`@deepseek-ai/schemastery`、`@deepseek-ai/dsh-mcp-client`）由 DSH 安装提供；bundle 声明它们仅用于版本检查。要求 DSH >= 0.2.1-0 < 0.3.0。
+
+## 开发
+
+全 ESM、无构建步骤：源码即发布产物。`npm test` 跑 `node --test`，`npm pack --dry-run` 必须包含全部运行时文件。开发约定见 [AGENTS.md](https://github.com/micln/dsh-mcp-autoload/blob/master/AGENTS.md)，发版与列表收录流程见 [PUBLISHING.md](https://github.com/micln/dsh-mcp-autoload/blob/master/PUBLISHING.md)。

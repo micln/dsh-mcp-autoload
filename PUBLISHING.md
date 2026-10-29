@@ -1,39 +1,25 @@
 # 发布与收录流程
 
-从代码到 `awesome-dsh-plugin.com` 插件页的完整流程。分四段：**发版（tag + CI）→ 仓库前置条件 → 提交收录 PR → 合并后站点生效**，最后是维护与本项目实操记录。日常开发约定见 [AGENTS.md](AGENTS.md)。
+从代码到 `awesome-dsh-plugin.com` 插件页的完整流程。分四段：**收录前的准备 → 仓库前置条件 → 提交收录 PR → 合并后站点生效**，最后是维护与本项目实操记录。日常开发与发版命令见 [AGENTS.md](AGENTS.md)。
 
 ---
 
-## 1. 发版：打 tag 由 CI 发布
+## 1. 收录前的准备
 
-npm 包不是收录的必要条件（列表从 GitHub 安装也能装），但**没有 npm 包就没有 npm 安装命令和下载量**，市场会一直展示较慢的源码安装方式。
+发版的完整步骤以 [AGENTS.md](AGENTS.md#发版) 为准（打 tag 由 CI 走 OIDC 发布，禁止本地 `npm publish`）。与收录相关、容易漏的只有几点：
 
-### 发布前检查
+- `package.json.repository.url` 必须指向 GitHub 仓库本身。列表站的 npm 映射（`scripts/probe-npm.mjs`）只认包自带的 `repository` 指回被收录仓库，防止重名包挂靠；**漏了这一项，站点永远不会显示 npm 安装命令。**
+- `repository` 一经发布就固化在该版本 manifest 里；改仓库地址后要**重新发版**才会被探测到。
+- 官方 `@deepseek-ai/*` 包用 `peerDependencies`，且 peer 范围要带显式预发布分支，否则 harness 的预发布版本会被静默排除，用户安装时报 `ERESOLVE`：
 
-- `package.json.version` 与要打的 tag 完全一致（去掉 `v`）。
-- `repository.url` 指向 GitHub 仓库本身。列表站的 npm 映射（`scripts/probe-npm.mjs`）靠它把包和条目绑定：只认包自带的 `repository` 指回被收录仓库，防止重名包挂靠。**漏了这一项，站点永远不会显示 npm 安装命令。**
-- `files` 白名单包含所有运行时文件；用 `npm pack --dry-run` 核对（见 AGENTS.md）。
-- 官方 `@deepseek-ai/*` 包写在 `peerDependencies`，不要写进 `dependencies`。
+  ```jsonc
+  // ❌ 看着宽，实际匹配不到 0.2.x-rc.N
+  "@deepseek-ai/dsh-mcp-client": ">=0.2.1-0 <0.3.0"
+  // ✅ 在匹配的元组上带预发布标签
+  "@deepseek-ai/dsh-mcp-client": ">=0.2.1-0 <0.3.0 || >=0.3.0-0 <0.4.0"
+  ```
 
-### 发布步骤
-
-**不要本地 `npm publish`**——token 已被 2FA 策略禁用，只有 CI 的 OIDC（npm Trusted Publishing）能发。`.github/workflows/publish.yml` 在推送 `v*` tag 时执行：校验 tag = `package.json` version → `npm test` → 版本已存在则跳过 → `npm publish --provenance` → 创建 GitHub Release。
-
-```sh
-git checkout master && git pull github master && git pull origin master
-# 编辑 package.json 的 version
-git commit -am "chore: release X.Y.Z"
-git push github master && git push origin master
-git tag vX.Y.Z && git push github vX.Y.Z && git push origin vX.Y.Z
-```
-
-注意：
-
-- 两个 remote 都要推：`github`（GitHub，npm 主页与 `repository` 指向它）和 `origin`（Gitea）。
-- tag 必须打在包含该 workflow 的提交上，不要往更早的提交打 tag。
-- 发布后核对 `npm view dsh-mcp-autoload dist-tags`（`latest` 应指向新版本）。registry 有几十秒传播延迟，别把延迟误判成失败。
-- `npm deprecate` / `npm unpublish` 不支持 OIDC，需要人工 OTP。
-- `repository` 字段一经发布就固化在该版本 manifest 里；改仓库地址后要**重新发版**才会被探测到。
+npm 包不是收录的必要条件（列表也能从 GitHub 安装），但没有 npm 包就没有 npm 安装命令和下载量，市场会一直展示较慢的源码安装方式。
 
 ---
 

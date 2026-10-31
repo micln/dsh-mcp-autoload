@@ -9,7 +9,9 @@ session ends. Servers from other projects never leak in.
 
 English | [中文](README.zh.md)
 
-![Session MCP panel showing a project-level server and a user-level server](https://raw.githubusercontent.com/micln/dsh-mcp-autoload/master/docs/mcp-panel.png)
+<p align="center">
+  <img src="https://raw.githubusercontent.com/micln/dsh-mcp-autoload/master/docs/mcp-panel.png" alt="Session MCP panel showing a project-level server and a user-level server" width="360">
+</p>
 
 The panel above is the session MCP inventory. `time` comes from the project's `.agents/mcp.json` (marked 项目级 / project level); `codegraph` comes from the profile (用户级 / user level).
 

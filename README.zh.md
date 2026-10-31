@@ -8,7 +8,9 @@
 
 [English](README.md) | 中文
 
-![会话 MCP 面板：项目级与用户级服务器](https://raw.githubusercontent.com/micln/dsh-mcp-autoload/master/docs/mcp-panel.png)
+<p align="center">
+  <img src="https://raw.githubusercontent.com/micln/dsh-mcp-autoload/master/docs/mcp-panel.png" alt="会话 MCP 面板：项目级与用户级服务器" width="360">
+</p>
 
 上图是会话内的 MCP 清单。`time` 来自项目的 `.agents/mcp.json`（标记为「项目级」）；`codegraph` 来自 profile 配置（标记为「用户级」）。
 

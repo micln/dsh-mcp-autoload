@@ -405,6 +405,108 @@ function translateEntry(entry, serverName, sessionCwd) {
 // ---- Plugin apply ----
 
 /**
+ * Discover one agent's project manifest and mount its servers inside that
+ * agent's own scope, then record the outcome on the inventory service.
+ *
+ * @param ctx - plugin context.
+ * @param config - resolved plugin configuration.
+ * @param service - the `mcpAutoload` inventory service.
+ * @param agent - the agent whose session owns the mounts.
+ * @param signal - optional cancellation signal from the creation announcement.
+ * @param options - `skipMounted` rebuilds the record of servers already bridged
+ *   into this agent without remounting them: a remount would change the tool
+ *   definitions and invalidate the model's prompt-prefix cache.
+ */
+async function discoverForAgent(ctx, config, service, agent, signal, options = {}) {
+  const label = 'mcp-autoload'
+  if (ctx.fiber.uid === null) return
+  let recorded = false
+  try {
+    // Forget the record when the agent goes away (plugin unload does not
+    // dispose agent.ctx effects by itself, so own the cleanup explicitly).
+    const bound = agent
+    agent.ctx.effect(() => () => service.forget(bound), `${label}.inventory`)
+    const workingDirectory = ctx.get('workingDirectory')
+    if (workingDirectory === undefined) {
+      ctx.logger.warn(`${label}: no working-directory provider; project MCP discovery is inactive`)
+      return
+    }
+    const sessionCwd = await workingDirectory.ensure(agent, signal)
+    const projectRoot = await findProjectRoot(sessionCwd, config.projectRootMarkers, signal)
+    const manifestPath = isAbsolute(config.configPath)
+      ? config.configPath
+      : join(projectRoot, config.configPath)
+    const raw = await readManifest(manifestPath, signal)
+    if (raw === undefined) return
+    const servers = parseServers(raw, manifestPath)
+
+    const settled = await Promise.allSettled(Object.entries(servers).map(async ([rawName, entry]) => {
+      const serverName = normalizeServerName(rawName)
+      const validEntry = entry !== null && typeof entry === 'object' && !Array.isArray(entry)
+      const enabled = !validEntry || (entry.disabled !== true && entry.enabled !== false)
+      const mount = {
+        serverName: rawName,
+        rawName,
+        enabled,
+        mounted: false,
+        mountError: '',
+        transport: entry?.url === undefined ? 'stdio' : 'streamable-http',
+        target: entry?.url ?? [entry?.command, ...(Array.isArray(entry?.args) ? entry.args : [])].filter(Boolean).join(' '),
+        entry,
+        fiber: undefined,
+      }
+      if (!enabled) return mount
+      // Backfill path only: this server is already bridged into the agent, so
+      // keep the live mount and rebuild only the inventory record.
+      if (options.skipMounted === true && toolsOf(service.ctx, agent, serverName).length > 0) {
+        mount.serverName = serverName
+        mount.mounted = true
+        return mount
+      }
+      try {
+        const translation = translateEntry(entry, serverName, sessionCwd)
+        if (translation === null) return mount
+        mount.transport = translation.transport
+        mount.target = translation.target
+        mount.fiber = agent.ctx.plugin(McpClient, translation.config)
+        await mount.fiber
+        mount.serverName = serverName
+        mount.mounted = true
+      } catch (error) {
+        mount.mountError = String(error)
+        if (mount.fiber !== undefined) await mount.fiber.dispose().catch(() => {})
+        throw Object.assign(error instanceof Error ? error : new Error(String(error)), { mount })
+      }
+      return mount
+    }))
+
+    const mounts = []
+    for (const [index, outcome] of settled.entries()) {
+      const rawName = Object.keys(servers)[index]
+      if (outcome.status === 'fulfilled') {
+        mounts.push(outcome.value)
+      } else {
+        const mount = outcome.reason?.mount ?? {
+          serverName: rawName, rawName, enabled: true, mounted: false,
+          mountError: String(outcome.reason), transport: 'unknown', target: '', entry: servers[rawName],
+        }
+        mounts.push(mount)
+        ctx.logger.error(`${label}: skipping "${rawName}" from ${manifestPath}: ${String(outcome.reason)}`)
+      }
+    }
+    service.record(agent, { manifestPath, mounts, sessionCwd })
+    recorded = true
+    if (mounts.length > 0) {
+      ctx.logger.info(`${label}: mounted ${mounts.map(mount => mount.serverName).join(', ')} from ${manifestPath}`)
+    }
+  } catch (error) {
+    // Contained: a broken manifest or missing service never blocks the agent.
+    ctx.logger.error(`${label}: discovery failed: ${String(error)}`)
+    if (!recorded) service.record(agent, { manifestPath: null, mounts: [] })
+  }
+}
+
+/**
  * Mount every discovered server inside each new agent's scope and expose the
  * per-session inventory through the `mcpAutoload` Remote service.
  *
@@ -420,83 +522,24 @@ export async function apply(ctx, config) {
   const service = ctx.get('mcpAutoload')
 
   ctx.on('agent/created', async ({ agent, signal }) => {
-    const label = 'mcp-autoload'
-    let recorded = false
-    try {
-      // Forget the record when the agent goes away (plugin unload does not
-      // dispose agent.ctx effects by itself, so own the cleanup explicitly).
-      const bound = agent
-      agent.ctx.effect(() => () => service.forget(bound), `${label}.inventory`)
-      const workingDirectory = ctx.get('workingDirectory')
-      if (workingDirectory === undefined) {
-        ctx.logger.warn(`${label}: no working-directory provider; project MCP discovery is inactive`)
-        return
-      }
-      const sessionCwd = await workingDirectory.ensure(agent, signal)
-      const projectRoot = await findProjectRoot(sessionCwd, config.projectRootMarkers, signal)
-      const manifestPath = isAbsolute(config.configPath)
-        ? config.configPath
-        : join(projectRoot, config.configPath)
-      const raw = await readManifest(manifestPath, signal)
-      if (raw === undefined) return
-      const servers = parseServers(raw, manifestPath)
-
-      const settled = await Promise.allSettled(Object.entries(servers).map(async ([rawName, entry]) => {
-        const serverName = normalizeServerName(rawName)
-        const validEntry = entry !== null && typeof entry === 'object' && !Array.isArray(entry)
-        const enabled = !validEntry || (entry.disabled !== true && entry.enabled !== false)
-        const mount = {
-          serverName: rawName,
-          rawName,
-          enabled,
-          mounted: false,
-          mountError: '',
-          transport: entry?.url === undefined ? 'stdio' : 'streamable-http',
-          target: entry?.url ?? [entry?.command, ...(Array.isArray(entry?.args) ? entry.args : [])].filter(Boolean).join(' '),
-          entry,
-          fiber: undefined,
-        }
-        if (!enabled) return mount
-        try {
-          const translation = translateEntry(entry, serverName, sessionCwd)
-          if (translation === null) return mount
-          mount.transport = translation.transport
-          mount.target = translation.target
-          mount.fiber = agent.ctx.plugin(McpClient, translation.config)
-          await mount.fiber
-          mount.serverName = serverName
-          mount.mounted = true
-        } catch (error) {
-          mount.mountError = String(error)
-          if (mount.fiber !== undefined) await mount.fiber.dispose().catch(() => {})
-          throw Object.assign(error instanceof Error ? error : new Error(String(error)), { mount })
-        }
-        return mount
-      }))
-
-      const mounts = []
-      for (const [index, outcome] of settled.entries()) {
-        const rawName = Object.keys(servers)[index]
-        if (outcome.status === 'fulfilled') {
-          mounts.push(outcome.value)
-        } else {
-          const mount = outcome.reason?.mount ?? {
-            serverName: rawName, rawName, enabled: true, mounted: false,
-            mountError: String(outcome.reason), transport: 'unknown', target: '', entry: servers[rawName],
-          }
-          mounts.push(mount)
-          ctx.logger.error(`${label}: skipping "${rawName}" from ${manifestPath}: ${String(outcome.reason)}`)
-        }
-      }
-      service.record(agent, { manifestPath, mounts, sessionCwd })
-      recorded = true
-      if (mounts.length > 0) {
-        ctx.logger.info(`${label}: mounted ${mounts.map(mount => mount.serverName).join(', ')} from ${manifestPath}`)
-      }
-    } catch (error) {
-      // Contained: a broken manifest or missing service never blocks the agent.
-      ctx.logger.error(`${label}: discovery failed: ${String(error)}`)
-      if (!recorded) service.record(agent, { manifestPath: null, mounts: [] })
-    }
+    await discoverForAgent(ctx, config, service, agent, signal)
   })
+
+  // Backfill: an agent that was already live when this plugin loaded — the
+  // session was resumed before the plugin, or the plugin was reloaded or
+  // upgraded — never receives `agent/created`, so its panel would report an
+  // empty inventory. Discover those agents once. A server already bridged into
+  // the agent keeps its live mount and only gets its record rebuilt, because
+  // remounting would invalidate the model's prompt-prefix cache.
+  const agents = service.ctx.get('agents')
+  if (agents === undefined) {
+    ctx.logger.warn('mcp-autoload: no agent registry; existing sessions are not backfilled')
+    return
+  }
+  for (const agent of agents.list()) {
+    void discoverForAgent(ctx, config, service, agent, undefined, { skipMounted: true })
+      .catch((error) => {
+        ctx.logger.error(`mcp-autoload: backfill for agent "${agent.id}" failed: ${String(error)}`)
+      })
+  }
 }

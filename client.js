@@ -665,6 +665,13 @@ window.__ModuleLoader__.load({
           : null);
     }
 
+    // A historical session's agent is resumed lazily, so the first `status`
+    // query can land before the resume plus MCP mounting has finished and come
+    // back with an empty list. `status` is a read-only query, so re-querying is
+    // the only safe recovery: back off through these delays and stop at the
+    // first non-empty answer.
+    const STATUS_RETRY_DELAYS_MS = [400, 900, 1800, 3000];
+
     /** The dock trigger plus its portaled popover. Receives the framework standard kit. */
     function McpAutoloadTrigger(props, t, remoteApi) {
       const sessionId = props.sessionId;
@@ -676,6 +683,9 @@ window.__ModuleLoader__.load({
       const [notice, setNotice] = React.useState(null);
       const rootRef = React.useRef(null);
       const panelRef = React.useRef(null);
+      // Bumped by every `load`; a chain whose token is stale exits silently so
+      // reopening the panel cannot stack concurrent queries.
+      const loadTokenRef = React.useRef(0);
       const available = sessionId !== undefined;
 
       const position = Primitives.useAnchoredPosition({
@@ -691,13 +701,25 @@ window.__ModuleLoader__.load({
 
       const load = React.useCallback(async (showBusy = true) => {
         if (sessionId === undefined) return;
+        const token = ++loadTokenRef.current;
         if (showBusy) setBusy(true);
         try {
-          const result = await remoteApi.status(sessionId);
+          let result = await remoteApi.status(sessionId);
           if (!result.ok) throw new Error(`${result.error.code}: ${result.error.message}`);
+          for (const delay of STATUS_RETRY_DELAYS_MS) {
+            // A resolved manifest path means the plugin already finished
+            // discovery for this session, so an empty list is the real answer.
+            if (result.value.servers.length > 0 || result.value.manifestPath !== null) break;
+            await new Promise((resolve) => { setTimeout(resolve, delay); });
+            if (token !== loadTokenRef.current) return;
+            result = await remoteApi.status(sessionId);
+            if (!result.ok) throw new Error(`${result.error.code}: ${result.error.message}`);
+          }
+          if (token !== loadTokenRef.current) return;
           setSnapshot(result.value);
           setError(null);
         } catch (cause) {
+          if (token !== loadTokenRef.current) return;
           setError(String(cause?.message ?? cause));
         } finally {
           if (showBusy) setBusy(false);
@@ -728,6 +750,13 @@ window.__ModuleLoader__.load({
 
       // Load once per session so the trigger can show the count before opening.
       React.useEffect(() => { void load(); }, [load]);
+
+      // Re-query whenever the panel opens: the initial load can race the lazy
+      // session resume, and this is what un-sticks a panel stuck on empty.
+      React.useEffect(() => { if (open) void load(false); }, [open, load]);
+
+      // Invalidate any in-flight retry chain on unmount so it cannot setState.
+      React.useEffect(() => () => { loadTokenRef.current += 1; }, []);
 
       React.useEffect(() => {
         if (!open) return undefined;

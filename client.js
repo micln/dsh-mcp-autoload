@@ -250,6 +250,11 @@ window.__ModuleLoader__.load({
   white-space: nowrap;
   cursor: pointer;
 }
+[data-dsh-mcp-autoload] .dma-trigger svg {
+  width: 14px;
+  height: 14px;
+  flex: none;
+}
 [data-dsh-mcp-autoload] .dma-trigger[aria-expanded='true'] {
   background: var(--dsw-alias-interactive-bg-hover);
   color: var(--dsw-alias-label-secondary);
@@ -740,7 +745,7 @@ window.__ModuleLoader__.load({
         'aria-haspopup': 'dialog',
         'aria-expanded': open,
         onClick: () => { setOpen(!open); },
-      }, count === undefined ? t('trigger') : `${t('trigger')} · ${count}`);
+      }, h(Primitives.IconPluginPinwheelOutlineRegular, { size: 14 }), count === undefined ? t('trigger') : `${t('trigger')} · ${count}`);
 
       let content;
       if (error !== null) {
@@ -806,7 +811,7 @@ window.__ModuleLoader__.load({
           // `usage` (order 1), and the context meter renders after the whole
           // dock, so the right end is permanently taken. A negative order is
           // the only real edge.
-          order: -100,
+          order: -50,
         }, (props) => McpAutoloadTrigger(props, t, remoteApi)));
       });
     }

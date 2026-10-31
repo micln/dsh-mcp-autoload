@@ -8,6 +8,10 @@
 
 [English](README.md) | 中文
 
+![会话 MCP 面板：项目级与用户级服务器](https://raw.githubusercontent.com/micln/dsh-mcp-autoload/master/docs/mcp-panel.png)
+
+上图是会话内的 MCP 清单。`time` 来自项目的 `.agents/mcp.json`（标记为「项目级」）；`codegraph` 来自 profile 配置（标记为「用户级」）。
+
 ## 安装
 
 需要 DSH `>=0.2.1-0 <0.3.0` 与 Node.js `^22.19.0 || >=24.0.0`。`dsh plugin` 会把参数转发给

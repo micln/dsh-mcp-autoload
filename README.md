@@ -9,6 +9,10 @@ session ends. Servers from other projects never leak in.
 
 English | [中文](README.zh.md)
 
+![Session MCP panel showing a project-level server and a user-level server](https://raw.githubusercontent.com/micln/dsh-mcp-autoload/master/docs/mcp-panel.png)
+
+The panel above is the session MCP inventory. `time` comes from the project's `.agents/mcp.json` (marked 项目级 / project level); `codegraph` comes from the profile (用户级 / user level).
+
 ## Install
 
 Requires DSH `>=0.2.1-0 <0.3.0` and Node.js `^22.19.0 || >=24.0.0`. `dsh plugin`

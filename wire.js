@@ -32,14 +32,24 @@ export const MCP_SERVER_VIEW_JSON = {
   additionalProperties: false,
 }
 
+/*
+ * `loading` reports that the host has not finished discovering and mounting
+ * this session's project servers yet: `servers` then lists only what is known
+ * so far (nothing before the manifest is read, every declared server right
+ * after). A session that is not live yet also reports `loading: true`, because
+ * its inventory cannot be known before it exists. The UI re-queries while this
+ * is true and suppresses the "no servers" note; it never renders a panel-wide
+ * loading row, because every row carries its own state.
+ */
 export const MCP_AUTOLOAD_SNAPSHOT_JSON = {
   type: 'object',
   properties: {
     sessionId: { type: 'string' },
     manifestPath: { type: ['string', 'null'] },
+    loading: { type: 'boolean' },
     servers: { type: 'array', items: MCP_SERVER_VIEW_JSON },
   },
-  required: ['sessionId', 'manifestPath', 'servers'],
+  required: ['sessionId', 'manifestPath', 'loading', 'servers'],
   additionalProperties: false,
 }
 

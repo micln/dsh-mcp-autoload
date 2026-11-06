@@ -61,6 +61,9 @@ export class McpAutoloadService extends TypertRemoteService {
   /** Live agents' mount records keyed by agent object identity. */
   _agents = new Map()
 
+  /** Agents whose project discovery/mount is still in flight. */
+  _pending = new Set()
+
   /** Active toggles keyed by session and raw server name. */
   _pendingToggles = new Set()
 
@@ -68,17 +71,49 @@ export class McpAutoloadService extends TypertRemoteService {
     super(ctx, 'mcpAutoload')
   }
 
-  /** Record one agent's mounts (called by the plugin after mounting settles). */
+  /**
+   * Record one agent's mounts (called by the plugin after mounting settles).
+   * A discovery that settles after its session was disposed must not resurrect
+   * it: the map entry would never be forgotten again. The registry identity is
+   * compared, not mere presence, because a rebuilt session is a new agent
+   * object while the id stays the same.
+   */
   record(agent, mounts) {
+    if (this.ctx.get('agents')?.get(agent.id) !== agent) return
     this._agents.set(agent, mounts)
+  }
+
+  /**
+   * Patch one already-recorded mount row when that server's own handshake
+   * settles, so a slow server never holds back the rows of the fast ones.
+   * Carries the same liveness + identity guard as {@link record}: a handshake
+   * can settle long after its session was disposed.
+   */
+  updateMount(agent, rawName, patch) {
+    if (this.ctx.get('agents')?.get(agent.id) !== agent) return
+    const recorded = this._agents.get(agent)
+    const mount = recorded?.mounts.find(item => item.rawName === rawName)
+    if (mount === undefined) return
+    Object.assign(mount, patch)
+  }
+
+  /** Mark one agent's discovery as in flight, so status reports `loading`. */
+  beginDiscovery(agent) {
+    this._pending.add(agent)
+  }
+
+  /** Mark one agent's discovery as settled, whatever its outcome was. */
+  endDiscovery(agent) {
+    this._pending.delete(agent)
   }
 
   /** Forget one agent (called from its disposal effect). */
   forget(agent) {
     this._agents.delete(agent)
+    this._pending.delete(agent)
   }
 
-  /** Toggle one project server. The Web UI asks the user to confirm before calling. */
+  /** Toggle one project server. The Web UI calls this on click, without a confirmation dialog. */
   async setEnabled(sessionId, rawName, enabled) {
     if (typeof rawName !== 'string' || rawName.length === 0 || typeof enabled !== 'boolean') {
       throw new Error('invalid MCP toggle request')
@@ -187,6 +222,8 @@ export class McpAutoloadService extends TypertRemoteService {
     return {
       sessionId,
       manifestPath: recorded?.manifestPath ?? null,
+      // Not live yet, or discovery has not settled: the list below is incomplete.
+      loading: agent === undefined || this._pending.has(agent),
       servers,
     }
   }
@@ -250,6 +287,11 @@ function viewOf(mount, origin, tools) {
 }
 
 // ---- Discovery helpers ----
+
+/** Whether one error is a cancellation rather than a failure. */
+function isAbortError(error) {
+  return error !== null && typeof error === 'object' && error.name === 'AbortError'
+}
 
 /** Whether one path exists (file or directory); missing paths are not errors. */
 async function pathExists(path, signal) {
@@ -405,8 +447,41 @@ function translateEntry(entry, serverName, sessionCwd) {
 // ---- Plugin apply ----
 
 /**
+ * Build the inventory row recorded before a server is mounted, so `status` can
+ * list the whole manifest while the handshakes are still in flight. Never
+ * throws: a raw name that cannot be normalized keeps its raw form and carries
+ * the normalization error, because one broken entry must not hide the others.
+ */
+function placeholderMount(rawName, entry) {
+  const validEntry = entry !== null && typeof entry === 'object' && !Array.isArray(entry)
+  let serverName = rawName
+  let mountError = ''
+  try {
+    serverName = normalizeServerName(rawName)
+  } catch (error) {
+    mountError = String(error)
+  }
+  return {
+    serverName,
+    rawName,
+    enabled: !validEntry || (entry.disabled !== true && entry.enabled !== false),
+    mounted: false,
+    mountError,
+    transport: entry?.url === undefined ? 'stdio' : 'streamable-http',
+    target: entry?.url ?? [entry?.command, ...(Array.isArray(entry?.args) ? entry.args : [])].filter(Boolean).join(' '),
+    entry,
+    fiber: undefined,
+  }
+}
+
+/**
  * Discover one agent's project manifest and mount its servers inside that
  * agent's own scope, then record the outcome on the inventory service.
+ *
+ * Never await this from an `agent/created` listener: the kernel awaits every
+ * listener serially, and mounting blocks until the MCP handshake completes.
+ * Callers use fire-and-forget and let the service's `loading` flag report
+ * progress.
  *
  * @param ctx - plugin context.
  * @param config - resolved plugin configuration.
@@ -420,6 +495,9 @@ function translateEntry(entry, serverName, sessionCwd) {
 async function discoverForAgent(ctx, config, service, agent, signal, options = {}) {
   const label = 'mcp-autoload'
   if (ctx.fiber.uid === null) return
+  // Marked before the first await, so a status query racing this call already
+  // reports `loading` rather than an inventory that only looks complete.
+  service.beginDiscovery(agent)
   let recorded = false
   try {
     // Forget the record when the agent goes away (plugin unload does not
@@ -440,69 +518,72 @@ async function discoverForAgent(ctx, config, service, agent, signal, options = {
     if (raw === undefined) return
     const servers = parseServers(raw, manifestPath)
 
-    const settled = await Promise.allSettled(Object.entries(servers).map(async ([rawName, entry]) => {
-      const serverName = normalizeServerName(rawName)
-      const validEntry = entry !== null && typeof entry === 'object' && !Array.isArray(entry)
-      const enabled = !validEntry || (entry.disabled !== true && entry.enabled !== false)
-      const mount = {
-        serverName: rawName,
-        rawName,
-        enabled,
-        mounted: false,
-        mountError: '',
-        transport: entry?.url === undefined ? 'stdio' : 'streamable-http',
-        target: entry?.url ?? [entry?.command, ...(Array.isArray(entry?.args) ? entry.args : [])].filter(Boolean).join(' '),
-        entry,
-        fiber: undefined,
+    // Publish the whole manifest before any handshake starts: the panel lists
+    // every declared server right away (disabled ones included, mounted:false),
+    // and each row below is filled in as soon as its own server settles.
+    const entries = Object.entries(servers)
+    const mounts = entries.map(([rawName, entry]) => placeholderMount(rawName, entry))
+    service.record(agent, { manifestPath, mounts, sessionCwd })
+    recorded = true
+
+    const settled = await Promise.allSettled(entries.map(async ([rawName, entry], index) => {
+      const mount = mounts[index]
+      if (!mount.enabled) return
+      if (mount.mountError !== '') {
+        // The raw name could not be normalized, so no client can be configured.
+        ctx.logger.error(`${label}: skipping "${rawName}" from ${manifestPath}: ${mount.mountError}`)
+        return
       }
-      if (!enabled) return mount
       // Backfill path only: this server is already bridged into the agent, so
       // keep the live mount and rebuild only the inventory record.
-      if (options.skipMounted === true && toolsOf(service.ctx, agent, serverName).length > 0) {
-        mount.serverName = serverName
+      if (options.skipMounted === true && toolsOf(service.ctx, agent, mount.serverName).length > 0) {
         mount.mounted = true
-        return mount
+        service.updateMount(agent, rawName, { mounted: true })
+        return
       }
       try {
-        const translation = translateEntry(entry, serverName, sessionCwd)
-        if (translation === null) return mount
+        const translation = translateEntry(entry, mount.serverName, sessionCwd)
+        if (translation === null) return
         mount.transport = translation.transport
         mount.target = translation.target
         mount.fiber = agent.ctx.plugin(McpClient, translation.config)
         await mount.fiber
-        mount.serverName = serverName
         mount.mounted = true
+        mount.mountError = ''
+        service.updateMount(agent, rawName, {
+          mounted: true,
+          mountError: '',
+          transport: translation.transport,
+          target: translation.target,
+        })
       } catch (error) {
         mount.mountError = String(error)
         if (mount.fiber !== undefined) await mount.fiber.dispose().catch(() => {})
-        throw Object.assign(error instanceof Error ? error : new Error(String(error)), { mount })
+        service.updateMount(agent, rawName, { mounted: false, mountError: mount.mountError })
+        ctx.logger.error(`${label}: skipping "${rawName}" from ${manifestPath}: ${String(error)}`)
       }
-      return mount
     }))
 
-    const mounts = []
+    // Safety net for anything that escaped one row's own handling: a server
+    // that failed without a reason would look unmounted forever.
     for (const [index, outcome] of settled.entries()) {
-      const rawName = Object.keys(servers)[index]
-      if (outcome.status === 'fulfilled') {
-        mounts.push(outcome.value)
-      } else {
-        const mount = outcome.reason?.mount ?? {
-          serverName: rawName, rawName, enabled: true, mounted: false,
-          mountError: String(outcome.reason), transport: 'unknown', target: '', entry: servers[rawName],
-        }
-        mounts.push(mount)
+      if (outcome.status === 'rejected' && mounts[index].mountError === '') {
+        const rawName = entries[index][0]
+        mounts[index].mountError = String(outcome.reason)
+        service.updateMount(agent, rawName, { mountError: mounts[index].mountError })
         ctx.logger.error(`${label}: skipping "${rawName}" from ${manifestPath}: ${String(outcome.reason)}`)
       }
     }
-    service.record(agent, { manifestPath, mounts, sessionCwd })
-    recorded = true
     if (mounts.length > 0) {
       ctx.logger.info(`${label}: mounted ${mounts.map(mount => mount.serverName).join(', ')} from ${manifestPath}`)
     }
   } catch (error) {
+    if (isAbortError(error)) return
     // Contained: a broken manifest or missing service never blocks the agent.
     ctx.logger.error(`${label}: discovery failed: ${String(error)}`)
     if (!recorded) service.record(agent, { manifestPath: null, mounts: [] })
+  } finally {
+    service.endDiscovery(agent)
   }
 }
 
@@ -521,8 +602,15 @@ export async function apply(ctx, config) {
   if (ctx.fiber.uid === null) return
   const service = ctx.get('mcpAutoload')
 
-  ctx.on('agent/created', async ({ agent, signal }) => {
-    await discoverForAgent(ctx, config, service, agent, signal)
+  // Fire-and-forget: the kernel awaits every `agent/created` listener serially,
+  // so awaiting the mount here would block the new session until the MCP
+  // handshake (up to its full timeout) finished. The listener returns
+  // synchronously; `loading` on the status snapshot reports progress instead.
+  ctx.on('agent/created', ({ agent, signal }) => {
+    void discoverForAgent(ctx, config, service, agent, signal)
+      .catch((error) => {
+        ctx.logger.error(`mcp-autoload: discovery for agent "${agent.id}" failed: ${String(error)}`)
+      })
   })
 
   // Backfill: an agent that was already live when this plugin loaded — the

@@ -112,13 +112,26 @@ same algorithm the DSH ACP bridge uses), e.g. `我的服务器` → `server_<has
   tools apply to that session only, and connections close when the agent is
   disposed. Two sessions in different projects can use the same server name
   independently.
-- **Startup.** Mounting happens during agent creation and awaits the initial
-  connection, so tools are available in the first turn. Servers connect in
-  parallel; one slow or broken server never blocks the others
-  (`failOnStartupError` stays false). A server that fails to connect is
-  skipped with an error log and the rest keep working.
-- **In-session management.** The popover can enable/disable project MCP servers
-  after a browser confirmation. The manifest is locked, backed up (only the five
+- **Startup.** Mounting runs in the **background** after the session is
+  created: a new session returns immediately instead of waiting for the MCP
+  handshake and tool discovery (a single connection may take up to its own
+  request timeout). Opening the popover lists **every server declared in the
+  manifest right away** (disabled entries included), and each server connects
+  and updates **its own row** independently: once connected, that row shows the
+  tools it registered and their count, while a failing server shows its error on
+  that row only. The dock trigger reports progress as "connected n/N" (n =
+  enabled servers mounted, N = enabled servers). While discovery is in flight,
+  opening the popover keeps re-querying until the host reports it settled
+  (bounded retries — a failed or hanging mount never polls forever), and
+  Refresh re-checks on demand. Project tools can therefore be missing from the
+  first turns until the mount completes. Servers connect in parallel; one slow
+  or broken server never blocks the others (`failOnStartupError` stays false). A
+  server that fails to connect is skipped with an error log and the rest keep
+  working.
+- **In-session management.** The popover can enable/disable project MCP servers;
+  a click applies immediately — no browser confirmation dialog in either
+  direction (the row's own state and the notice below are the feedback).
+  The manifest is locked, backed up (only the five
   newest backups are kept) and replaced atomically; a symlinked manifest is
   followed so the link itself survives. Disabling unloads its tools at once. If
   re-enabling cannot mount, the manifest is rolled back to its previous state and

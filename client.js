@@ -64,9 +64,10 @@ window.__ModuleLoader__.load({
       properties: {
         sessionId: { type: 'string' },
         manifestPath: { type: ['string', 'null'] },
+        loading: { type: 'boolean' },
         servers: { type: 'array', items: MCP_SERVER_VIEW_JSON },
       },
-      required: ['sessionId', 'manifestPath', 'servers'],
+      required: ['sessionId', 'manifestPath', 'loading', 'servers'],
       additionalProperties: false,
     };
 
@@ -150,22 +151,23 @@ window.__ModuleLoader__.load({
         manifest: 'Manifest',
         transport: 'transport',
         refresh: 'Refresh',
-        loading: 'Loading…',
         error: 'Failed to load MCP inventory',
         originProject: 'Project-level (from .agents/mcp.json)',
         originUser: 'User-level (profile configuration)',
         enabled: 'Enabled',
         disabled: 'Disabled',
         retry: 'Retry',
-        enabledState: 'Enabled',
         disabledState: 'Disabled',
         enable: 'Enable',
         disable: 'Disable',
-        confirmEnable: 'Enable this project MCP server? The project JSON file will be rewritten.',
-        confirmDisable: 'Disable this project MCP server? Its tools will be removed from this session and the project JSON file will be rewritten.',
         toggleFailed: 'Failed to change MCP server',
         toggleDone: 'MCP server updated. Backup: ',
         mountFailed: 'Connection failed',
+        connected: 'Connected',
+        mountFailedState: 'Mount failed',
+        connecting: 'Connecting…',
+        noTools: 'No tools',
+        noToolsHint: 'This server registered no tools, or it is still reconnecting after a failed first connection.',
       },
       zh: {
         trigger: 'MCP 服务器',
@@ -184,22 +186,23 @@ window.__ModuleLoader__.load({
         manifest: '配置文件',
         transport: '传输',
         refresh: '刷新',
-        loading: '加载中…',
         error: '加载 MCP 清单失败',
         originProject: '项目级（来自 .agents/mcp.json）',
         originUser: '用户级（profile 配置）',
         enabled: '已启用',
         disabled: '已禁用',
         retry: '重试连接',
-        enabledState: '已启用',
         disabledState: '已禁用',
         enable: '启用',
         disable: '禁用',
-        confirmEnable: '确定启用此项目级 MCP？将同步修改项目 JSON 文件。',
-        confirmDisable: '确定禁用此项目级 MCP？它的工具会从当前会话移除，并同步修改项目 JSON 文件。',
         toggleFailed: '修改 MCP 状态失败',
         toggleDone: '已更新 MCP。备份：',
         mountFailed: '连接失败',
+        connected: '已连接',
+        mountFailedState: '挂载失败',
+        connecting: '连接中…',
+        noTools: '无工具',
+        noToolsHint: '该 server 未注册任何工具，或首次连接失败后仍在后台重连。',
       },
     };
 
@@ -254,6 +257,42 @@ window.__ModuleLoader__.load({
   width: 14px;
   height: 14px;
   flex: none;
+}
+/* "Connected n/N" next to the trigger: per-server state, not an overall spinner. */
+[data-dsh-mcp-autoload] .dma-trigger-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+/* Small state dot; the tone modifier picks the colour. */
+[data-dsh-mcp-autoload] .dma-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--dsw-alias-label-tertiary);
+}
+[data-dsh-mcp-autoload] .dma-dot-ok {
+  background: var(--dsw-alias-state-success-primary);
+}
+[data-dsh-mcp-autoload] .dma-dot-pending {
+  background: var(--dsw-alias-state-warn-primary);
+}
+[data-dsh-mcp-autoload] .dma-dot-error {
+  background: var(--dsw-alias-state-error-primary);
+}
+/* Spinner: the shared Primitives loading-outline glyph, turned by CSS. */
+@keyframes dsh-mcp-autoload-spin {
+  to { transform: rotate(360deg); }
+}
+[data-dsh-mcp-autoload] .dma-spin {
+  flex: none;
+  animation: dsh-mcp-autoload-spin 0.9s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-dsh-mcp-autoload] .dma-spin {
+    animation: none;
+  }
 }
 [data-dsh-mcp-autoload] .dma-trigger[aria-expanded='true'] {
   background: var(--dsw-alias-interactive-bg-hover);
@@ -323,6 +362,9 @@ window.__ModuleLoader__.load({
   color: var(--dsw-alias-label-tertiary);
 }
 [data-dsh-mcp-autoload] .dma-refresh {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   flex: none;
   font: inherit;
   font-size: 12px;
@@ -408,21 +450,16 @@ window.__ModuleLoader__.load({
   opacity: 0.5;
 }
 [data-dsh-mcp-autoload] .dma-server-state {
-  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 2px;
   color: var(--dsw-alias-label-tertiary);
-  white-space: nowrap;
 }
 [data-dsh-mcp-autoload] .dma-server-error {
   margin-top: 2px;
   color: var(--dsw-alias-state-error-primary);
   overflow-wrap: anywhere;
-}
-[data-dsh-mcp-autoload] .dma-server-count {
-  flex: none;
-  margin-left: auto;
-  color: var(--dsw-alias-label-tertiary);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
 }
 [data-dsh-mcp-autoload] .dma-target {
   margin-top: 2px;
@@ -436,6 +473,10 @@ window.__ModuleLoader__.load({
   margin: 6px 0 0;
   padding: 0;
   list-style: none;
+  /* A server with many tools must not stretch the whole popover. */
+  max-height: 240px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 [data-dsh-mcp-autoload] .dma-tool > summary {
   display: flex;
@@ -629,10 +670,30 @@ window.__ModuleLoader__.load({
           body.length > 0 ? h('div', { className: 'dma-tool-body' }, body) : null));
     }
 
+    /**
+     * Per-server connection state. The trigger and the rows both read this, so
+     * "connected" always means one thing: enabled, mounted, no mount error.
+     */
+    function serverState(t, server) {
+      if (!server.enabled) return { tone: 'off', text: t('disabledState') };
+      // Error first: the host records a failed handshake as `mounted: false`
+      // plus `mountError`, so testing `!mounted` first would label a server
+      // that just failed as "connecting".
+      if (server.mountError) return { tone: 'error', text: t('mountFailedState') };
+      if (!server.mounted) return { tone: 'pending', text: t('connecting') };
+      if (server.toolCount > 0) {
+        return { tone: 'ok', text: `${t('connected')} · ${server.toolCount} ${server.toolCount === 1 ? t('tool') : t('tools')}` };
+      }
+      // Mounted yet tool-less is ambiguous on purpose: either the server really
+      // registers nothing, or its first connect failed and it is retrying.
+      return { tone: 'idle', text: t('noTools'), title: t('noToolsHint') };
+    }
+
     function ServerGroup(t, server, busy, onToggle) {
       const isProject = server.origin === 'project';
       const retrying = server.enabled && !server.mounted;
       const label = retrying ? t('retry') : server.enabled ? t('disable') : t('enable');
+      const state = serverState(t, server);
       return h('div', { key: `${server.origin}:${server.rawName || server.serverName}`, className: 'dma-server' },
         h('div', { className: 'dma-server-head' },
           h('span', { className: 'dma-server-name' }, server.rawName || server.serverName),
@@ -649,11 +710,10 @@ window.__ModuleLoader__.load({
                 'aria-pressed': server.enabled,
                 onClick: () => onToggle(server),
               }, busy ? '…' : label)
-            : h('span', { className: 'dma-server-count' },
-                `${server.toolCount} ${server.toolCount === 1 ? t('tool') : t('tools')}`)),
-        isProject
-          ? h('div', { className: 'dma-server-state' }, server.enabled ? t('enabledState') : t('disabledState'))
-          : null,
+            : null),
+        h('div', { className: 'dma-server-state', title: state.title },
+          h('span', { className: `dma-dot dma-dot-${state.tone}`, 'aria-hidden': 'true' }),
+          h('span', null, state.text)),
         server.target
           ? h('div', { className: 'dma-target' }, `${t('transport')}: ${server.transport} · ${server.target}`)
           : null,
@@ -665,12 +725,22 @@ window.__ModuleLoader__.load({
           : null);
     }
 
-    // A historical session's agent is resumed lazily, so the first `status`
-    // query can land before the resume plus MCP mounting has finished and come
-    // back with an empty list. `status` is a read-only query, so re-querying is
-    // the only safe recovery: back off through these delays and stop at the
-    // first non-empty answer.
+    /** The shared Primitives loading glyph; `.dma-spin` rotates it (see CSS). */
+    function LoadingSpinner(size = 14) {
+      return h(Primitives.IconLoadingOutlineRegular, { size, className: 'dma-spin' });
+    }
+
+    // `snapshot.loading` means the host has not finished discovering and
+    // mounting this session's project servers, so `servers` may still be empty
+    // for a session that will end up having some. `status` is a read-only
+    // query, so re-querying is the only safe recovery: back off through these
+    // delays and stop at the first answer the host reports as settled.
     const STATUS_RETRY_DELAYS_MS = [400, 900, 1800, 3000];
+    // A session that is still loading when one retry chain is spent keeps its
+    // spinner, but auto-restarts the chain at most this many times — and only
+    // while the panel is open — so a slow mount can still settle on its own
+    // without turning into unbounded polling.
+    const STATUS_LOADING_CHAIN_LIMIT = 3;
 
     /** The dock trigger plus its portaled popover. Receives the framework standard kit. */
     function McpAutoloadTrigger(props, t, remoteApi) {
@@ -686,6 +756,27 @@ window.__ModuleLoader__.load({
       // Bumped by every `load`; a chain whose token is stale exits silently so
       // reopening the panel cannot stack concurrent queries.
       const loadTokenRef = React.useRef(0);
+      // Token of the chain that currently owns `busy`, or 0 when nobody does.
+      // Only the owner may clear it: guarding on `loadTokenRef` alone would
+      // strand `busy` forever when a background `load(false)` (opening the
+      // panel, or the self-heal poll) supersedes a `load(true)`. A `toggle`
+      // owns it through a symbol of its own, so no load chain can clear it.
+      const busyTokenRef = React.useRef(0);
+      // False once this trigger unmounted or its session changed: an in-flight
+      // `toggle` must not paint state into a component that is gone.
+      const aliveRef = React.useRef(true);
+      // The session this trigger currently renders. `aliveRef` only says the
+      // component exists; a `toggle` started for a previous session must also
+      // not paint its notice into the new session's panel.
+      const sessionRef = React.useRef(sessionId);
+      sessionRef.current = sessionId;
+      // Mirrors `open` for `load`'s self-heal timer without making `load`
+      // change identity (which would re-run the mount effect).
+      const openRef = React.useRef(false);
+      // Consecutive retry chains that ended while still `loading`, and the
+      // pending self-heal timer; both reset as soon as the host settles.
+      const chainRef = React.useRef(0);
+      const retryTimerRef = React.useRef(null);
       const available = sessionId !== undefined;
 
       const position = Primitives.useAnchoredPosition({
@@ -702,14 +793,30 @@ window.__ModuleLoader__.load({
       const load = React.useCallback(async (showBusy = true) => {
         if (sessionId === undefined) return;
         const token = ++loadTokenRef.current;
-        if (showBusy) setBusy(true);
+        if (retryTimerRef.current !== null) {
+          clearTimeout(retryTimerRef.current);
+          retryTimerRef.current = null;
+        }
+        if (showBusy && busyTokenRef.current === 0) {
+          // Never steal `busy` from a running toggle: the toggle owns it until
+          // its own remote call settles.
+          busyTokenRef.current = token;
+          setBusy(true);
+        }
         try {
           let result = await remoteApi.status(sessionId);
           if (!result.ok) throw new Error(`${result.error.code}: ${result.error.message}`);
           for (const delay of STATUS_RETRY_DELAYS_MS) {
-            // A resolved manifest path means the plugin already finished
-            // discovery for this session, so an empty list is the real answer.
-            if (result.value.servers.length > 0 || result.value.manifestPath !== null) break;
+            // `loading` is the host's own "discovery has not finished" flag, so
+            // it beats the old empty-list heuristic: a partial list is not an
+            // answer yet — but it is already worth painting, because the host
+            // lists every registered server at once and then connects them one
+            // by one. Commit each answer so rows and their states move on their
+            // own instead of waiting for the whole chain to settle.
+            if (!result.value.loading) break;
+            if (token !== loadTokenRef.current) return;
+            setSnapshot(result.value);
+            setError(null);
             await new Promise((resolve) => { setTimeout(resolve, delay); });
             if (token !== loadTokenRef.current) return;
             result = await remoteApi.status(sessionId);
@@ -718,45 +825,99 @@ window.__ModuleLoader__.load({
           if (token !== loadTokenRef.current) return;
           setSnapshot(result.value);
           setError(null);
+          if (!result.value.loading) {
+            chainRef.current = 0;
+          } else if (openRef.current && chainRef.current < STATUS_LOADING_CHAIN_LIMIT) {
+            // Still mounting after a full chain: keep polling, but only while
+            // the panel is open and only for a bounded number of chains.
+            chainRef.current += 1;
+            retryTimerRef.current = setTimeout(() => {
+              retryTimerRef.current = null;
+              void load(false);
+            }, STATUS_RETRY_DELAYS_MS[STATUS_RETRY_DELAYS_MS.length - 1]);
+          }
         } catch (cause) {
           if (token !== loadTokenRef.current) return;
           setError(String(cause?.message ?? cause));
         } finally {
-          if (showBusy) setBusy(false);
+          // Only the chain that raised `busy` may lower it; a superseded chain
+          // must not clear the flag of the load that replaced it.
+          if (busyTokenRef.current === token) {
+            busyTokenRef.current = 0;
+            setBusy(false);
+          }
         }
       }, [sessionId, remoteApi]);
 
       const toggle = React.useCallback(async (server) => {
         if (server.origin !== 'project' || !server.rawName || sessionId === undefined || busy) return;
         const retrying = server.enabled && !server.mounted;
-        const message = retrying ? null : server.enabled ? t('confirmDisable') : t('confirmEnable');
-        if (message !== null && typeof window.confirm === 'function' && !window.confirm(`${message}\n\n${server.rawName || server.serverName}`)) return;
         const enabled = retrying || !server.enabled;
+        // No confirmation dialog in either direction: the toggle is a
+        // reversible switch, the manifest write is locked and backed up, and
+        // the row's own state plus the notice/error below is the feedback.
+        // This toggle owns `busy` through a symbol, so a load chain settling
+        // meanwhile can never clear the flag of a toggle that is still running.
+        const owner = Symbol('toggle');
+        busyTokenRef.current = owner;
         setBusy(true);
         setToggleError(null);
         setNotice(null);
         try {
           const result = await remoteApi.setEnabled(sessionId, server.rawName, enabled);
+          if (!aliveRef.current || sessionRef.current !== sessionId) return;
           if (!result.ok) throw new Error(`${result.error.code}: ${result.error.message}`);
           setNotice(result.value.backupPath ? `${t('toggleDone')} ${result.value.backupPath}` : t(enabled ? 'enabled' : 'disabled'));
           await load(false);
         } catch (cause) {
+          if (!aliveRef.current || sessionRef.current !== sessionId) return;
           setToggleError(`${t('toggleFailed')}: ${String(cause?.message ?? cause)}`);
           await load(false);
         } finally {
-          setBusy(false);
+          if (busyTokenRef.current === owner) {
+            busyTokenRef.current = 0;
+            if (aliveRef.current) setBusy(false);
+          }
         }
       }, [sessionId, busy, remoteApi, load, t]);
 
       // Load once per session so the trigger can show the count before opening.
       React.useEffect(() => { void load(); }, [load]);
 
-      // Re-query whenever the panel opens: the initial load can race the lazy
-      // session resume, and this is what un-sticks a panel stuck on empty.
-      React.useEffect(() => { if (open) void load(false); }, [open, load]);
+      // Re-query whenever the panel opens: the initial load can race a lazy
+      // session resume or a still-running mount, and this is what un-sticks a
+      // panel that would otherwise sit on its loading indicator. Closing the
+      // panel drops any pending self-heal poll and its chain budget.
+      React.useEffect(() => {
+        openRef.current = open;
+        if (open) {
+          void load(false);
+          return undefined;
+        }
+        if (retryTimerRef.current !== null) {
+          clearTimeout(retryTimerRef.current);
+          retryTimerRef.current = null;
+        }
+        chainRef.current = 0;
+        return undefined;
+      }, [open, load]);
 
-      // Invalidate any in-flight retry chain on unmount so it cannot setState.
-      React.useEffect(() => () => { loadTokenRef.current += 1; }, []);
+      // Invalidate any in-flight retry chain or toggle when `load` is replaced
+      // (session switch) or on unmount, so stale work cannot setState: the
+      // `busy` ownership token is dropped with it, and `aliveRef` silences a
+      // `toggle` that is still awaiting its remote call.
+      React.useEffect(() => {
+        aliveRef.current = true;
+        return () => {
+          aliveRef.current = false;
+          loadTokenRef.current += 1;
+          busyTokenRef.current = 0;
+          if (retryTimerRef.current !== null) {
+            clearTimeout(retryTimerRef.current);
+            retryTimerRef.current = null;
+          }
+        };
+      }, [load]);
 
       React.useEffect(() => {
         if (!open) return undefined;
@@ -767,6 +928,12 @@ window.__ModuleLoader__.load({
 
       if (!available) return null;
 
+      // Per-server state, not an overall loading indicator: the trigger keeps
+      // its pinwheel and shows how many enabled servers are connected. The
+      // host's `loading` flag still drives the polling below, never the glyph.
+      const enabledServers = snapshot === null ? [] : snapshot.servers.filter(server => server.enabled);
+      const connectedCount = enabledServers.filter(server => server.mounted && !server.mountError).length;
+      const allConnected = enabledServers.length > 0 && connectedCount === enabledServers.length;
       const count = snapshot === null ? undefined : snapshot.servers.length;
       const trigger = h('button', {
         type: 'button',
@@ -774,17 +941,33 @@ window.__ModuleLoader__.load({
         'aria-haspopup': 'dialog',
         'aria-expanded': open,
         onClick: () => { setOpen(!open); },
-      }, h(Primitives.IconPluginPinwheelOutlineRegular, { size: 14 }), count === undefined ? t('trigger') : `${t('trigger')} · ${count}`);
+      }, h(Primitives.IconPluginPinwheelOutlineRegular, { size: 14 }),
+        enabledServers.length > 0
+          ? h('span', { className: 'dma-trigger-state' },
+              h('span', {
+                className: `dma-dot dma-dot-${allConnected ? 'ok' : 'pending'}`,
+                'aria-hidden': 'true',
+              }),
+              `${t('connected')} ${connectedCount}/${enabledServers.length}`)
+          : t('trigger'));
 
       let content;
       if (error !== null) {
         content = h('div', { className: 'dma-error' }, `${t('error')}: ${error}`);
-      } else if (snapshot === null) {
-        content = h('div', { className: 'dma-note' }, t('loading'));
-      } else if (snapshot.servers.length === 0) {
-        content = h('div', { className: 'dma-note' }, t('noServers'));
       } else {
-        content = snapshot.servers.map(server => ServerGroup(t, server, busy, toggle));
+        // Rows carry their own state; there is no panel-wide loading row. A
+        // partial list is the point: `loading` only means more is coming.
+        const rows = [];
+        if (snapshot !== null && snapshot.servers.length > 0) {
+          rows.push(...snapshot.servers.map(server => ServerGroup(t, server, busy, toggle)));
+        } else if (snapshot !== null) {
+          // Either the manifest declares nothing, or discovery has not answered
+          // yet. Without this row the body would be blank in both cases — and a
+          // session with no live agent reports `loading` for as long as it lasts.
+          rows.push(h('div', { key: 'empty', className: 'dma-note' },
+            snapshot.loading ? t('connecting') : t('noServers')));
+        }
+        content = rows;
       }
 
       const panel = open
@@ -808,8 +991,9 @@ window.__ModuleLoader__.load({
                   type: 'button',
                   className: 'dma-refresh',
                   disabled: busy,
-                  onClick: () => void load(),
-                }, t('refresh'))),
+                  'aria-busy': busy,
+                  onClick: () => { chainRef.current = 0; void load(); },
+                }, busy ? LoadingSpinner(12) : null, t('refresh'))),
               h('div', { className: 'dma-rule' }),
               toggleError ? h('div', { className: 'dma-error' }, toggleError) : null,
               notice ? h('div', { className: 'dma-note' }, notice) : null,

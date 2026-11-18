@@ -10,7 +10,11 @@ async function loadBrowserDescriptors() {
   const window = { __ModuleLoader__: { load: ({ factory: registered }) => { factory = registered } } }
   runInNewContext(await readFile(new URL('./client.js', import.meta.url), 'utf8'), { window })
 
-  const plugin = factory(() => ({}))
+  // Only the members the bundle touches while evaluating its factory: `class
+  // extends React.Component` for the dock's error boundary, and nothing else —
+  // `apply()` is called with its own stub context below.
+  const react = { Component: class {}, createElement: () => null }
+  const plugin = factory((specifier) => (specifier === 'react' ? react : {}))
   let remote
   await plugin.apply({
     effect() {},

@@ -162,6 +162,10 @@ Peer packages (`@deepseek-ai/cordis`, `@deepseek-ai/schemastery`,
 `@deepseek-ai/dsh-mcp-client`) are provided by the DSH installation; the
 bundle declares them only for version checks. Requires DSH >= 0.2.1-0 < 0.3.0.
 
+If a DSH upgrade removes a Client UI API this bundle calls, the dock renders
+`MCP servers · failed to render` — the reason on hover, and the same detail in
+`console.error` — instead of silently disappearing.
+
 ## Development
 
 All ESM, no build step: the source is the published artifact. `npm test` runs

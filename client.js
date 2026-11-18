@@ -168,6 +168,8 @@ window.__ModuleLoader__.load({
         connecting: 'Connecting…',
         noTools: 'No tools',
         noToolsHint: 'This server registered no tools, or it is still reconnecting after a failed first connection.',
+        renderFailed: 'failed to render',
+        renderFailedHint: 'The plugin could not draw its dock control, so the host removed it. The detail is above and in the browser console; resolve the version mismatch, then reload the page.',
       },
       zh: {
         trigger: 'MCP 服务器',
@@ -203,6 +205,8 @@ window.__ModuleLoader__.load({
         connecting: '连接中…',
         noTools: '无工具',
         noToolsHint: '该 server 未注册任何工具，或首次连接失败后仍在后台重连。',
+        renderFailed: '渲染失败',
+        renderFailedHint: '插件无法绘制停靠栏控件，宿主已将其移除。上方与浏览器控制台里有详细信息；解决版本不匹配后重新加载页面。',
       },
     };
 
@@ -281,6 +285,23 @@ window.__ModuleLoader__.load({
 [data-dsh-mcp-autoload] .dma-dot-error {
   background: var(--dsw-alias-state-error-primary);
 }
+/* Render-failure marker: keeps the trigger's footprint so a crash reads as a
+   broken control rather than an absent one. Deliberately uses no Primitives
+   glyph, no portal and no anchor — nothing a version gap can remove. */
+[data-dsh-mcp-autoload] .dma-dock-error {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  padding: 1px 8px;
+  border: none;
+  border-radius: var(--dsw-radius-sm);
+  color: var(--dsw-alias-state-error-primary);
+  font-size: var(--dsh-content-font-size-secondary, 13px);
+  line-height: calc(20px + var(--dsh-content-font-delta-secondary, 0px));
+  white-space: nowrap;
+  cursor: help;
+}
 /* Spinner: the shared Primitives loading-outline glyph, turned by CSS. */
 @keyframes dsh-mcp-autoload-spin {
   to { transform: rotate(360deg); }
@@ -304,15 +325,33 @@ window.__ModuleLoader__.load({
     color: var(--dsw-alias-label-secondary);
   }
 }
-/* Portaled surface: the data attribute travels with it so the sheet applies. */
+/* Portaled surface: the data attribute travels with it so the sheet applies.
+   Placement is CSS anchor positioning: the trigger publishes the instance's
+   anchor-name inline and the panel points position-anchor at it inline, so the
+   anchor() insets below follow the trigger through zoom, scrolling, and layout
+   changes with no measuring hook. The panel sits above the trigger's top edge
+   with an 8px gap and its right edge on the trigger's right edge; safe end
+   alignment keeps it inside the viewport when that would overflow, and the two
+   viewport insets bound the area it is aligned in. */
 [data-dsh-mcp-autoload].dma-panel,
 [data-dsh-mcp-autoload] .dma-panel {
   position: fixed;
+  position-area: none;
+  top: max(12px, var(--dsh-frame-overlay-top, 12px));
+  left: 12px;
+  right: anchor(right);
+  bottom: calc(anchor(top) + 8px);
+  align-self: safe end;
+  justify-self: safe end;
+  height: fit-content;
+  min-height: 0;
+  margin: 0;
   z-index: 1100;
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
   width: min(360px, calc(100vw - 24px));
+  max-width: calc(100vw - 24px);
   max-height: min(70vh, 480px);
   padding: 12px;
   border: 0;
@@ -779,15 +818,10 @@ window.__ModuleLoader__.load({
       const retryTimerRef = React.useRef(null);
       const available = sessionId !== undefined;
 
-      const position = Primitives.useAnchoredPosition({
-        open: open && available,
-        anchorRef: rootRef,
-        panelRef,
-        side: 'top',
-        align: 'end',
-        gap: 8,
-        margin: 12,
-      });
+      // The trigger publishes this dashed-ident as its `anchor-name` and the
+      // portaled panel points its `position-anchor` back at it; CSS resolves
+      // the placement, so nothing here measures the anchor.
+      const anchorName = `--dma-mcp-${React.useId().replaceAll(':', '')}`;
       Primitives.useDismissOnOutsidePointer(rootRef, open && available, setOpen, panelRef);
 
       const load = React.useCallback(async (showBusy = true) => {
@@ -938,6 +972,9 @@ window.__ModuleLoader__.load({
       const trigger = h('button', {
         type: 'button',
         className: 'dma-trigger',
+        // Named anchor for `.dma-panel`; unique per instance because several
+        // triggers can be mounted at once across sessions.
+        style: { anchorName },
         'aria-haspopup': 'dialog',
         'aria-expanded': open,
         onClick: () => { setOpen(!open); },
@@ -978,7 +1015,8 @@ window.__ModuleLoader__.load({
               className: 'dma-panel',
               role: 'dialog',
               'aria-label': t('title'),
-              style: position ?? { visibility: 'hidden', left: 0, top: 0 },
+              // The panel's anchor, paired with the `anchor()` insets in the sheet.
+              style: { positionAnchor: anchorName },
             },
               h('div', { className: 'dma-head' },
                 h('span', { className: 'dma-head-title' }, t('title')),
@@ -1005,6 +1043,80 @@ window.__ModuleLoader__.load({
       return h('span', { ref: rootRef, 'data-dsh-mcp-autoload': true }, trigger, panel);
     }
 
+    // ---- Render-failure surfacing ----
+    // The host isolates a crashing dock entry by retiring it and leaving an
+    // empty `div[data-slot-error]` where its content would be, so a primitives
+    // export removed by a DSH upgrade reads exactly like "this plugin had
+    // nothing to show". Both guards keep the failure inside our own control:
+    // a capability probe for the primitives this bundle calls, and a React
+    // boundary for everything else that throws. The visible marker is also
+    // what stops the host's slot supervision from retiring the entry outright.
+
+    /** Primitives members this bundle calls; a missing one is a version gap. */
+    const REQUIRED_PRIMITIVES = [
+      'IconLoadingOutlineRegular',
+      'IconPluginPinwheelOutlineRegular',
+      'useDismissOnOutsidePointer',
+    ];
+
+    /** The names this DSH build no longer exports. */
+    function missingPrimitives() {
+      return REQUIRED_PRIMITIVES.filter(key => Primitives[key] === undefined);
+    }
+
+    /**
+     * What the dock shows when this bundle cannot render: the trigger's own
+     * footprint worded as a failure, the reason on hover, and a DOM marker to
+     * find it by. Depends on nothing a version gap can remove.
+     */
+    function DockFailure(t, detail) {
+      const message = `${t('title')} · ${t('renderFailed')}`;
+      return h('span', { 'data-dsh-mcp-autoload': true },
+        h('span', {
+          className: 'dma-dock-error',
+          'data-dsh-mcp-autoload-error': true,
+          role: 'note',
+          'aria-label': message,
+          title: `${detail}\n\n${t('renderFailedHint')}`,
+          onClick: () => { console.error('[mcp-autoload]', detail); },
+        },
+          h('span', { className: 'dma-dot dma-dot-error', 'aria-hidden': true }),
+          message));
+    }
+
+    /**
+     * One render failure, one marker. Catching here also keeps the host's slot
+     * boundaries from abdicating the entry, so a transient throw does not need
+     * a page reload to come back.
+     */
+    class DockGuard extends React.Component {
+      constructor(props) {
+        super(props);
+        this.state = { error: null };
+      }
+
+      static getDerivedStateFromError(error) {
+        return { error };
+      }
+
+      componentDidCatch(error) {
+        console.error('[mcp-autoload] dock render failed:', error);
+      }
+
+      render() {
+        const { error } = this.state;
+        if (error !== null) {
+          const detail = error instanceof Error ? error.message : String(error);
+          return DockFailure(this.props.t, detail);
+        }
+        const missing = this.props.missing;
+        if (missing.length > 0) {
+          return DockFailure(this.props.t, `missing Primitives: ${missing.join(', ')}`);
+        }
+        return this.props.children;
+      }
+    }
+
     // ---- Browser plugin apply ----
 
     async function apply(ctx) {
@@ -1017,6 +1129,10 @@ window.__ModuleLoader__.load({
         const slots = scope.get('slots');
         const t = scope.locale.bind(NS);
         const remoteApi = scope.remote.mcpAutoload;
+        // Probed once per apply: a gap here means the installed DSH dropped an
+        // export this bundle calls, which the marker names outright.
+        const missing = missingPrimitives();
+        const Trigger = (props) => McpAutoloadTrigger(props, t, remoteApi);
         slots.inject('conversation.composer.dock', () => slots.register({
           name: 'conversation.composer.dock',
           id: 'mcp-autoload',
@@ -1025,7 +1141,7 @@ window.__ModuleLoader__.load({
           // dock, so the right end is permanently taken. A negative order is
           // the only real edge.
           order: -50,
-        }, (props) => McpAutoloadTrigger(props, t, remoteApi)));
+        }, (props) => h(DockGuard, { t, missing }, h(Trigger, props))));
       });
     }
 
